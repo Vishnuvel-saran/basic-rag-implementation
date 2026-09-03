@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Environment
+.env
+
+# Uploaded data
+backend/data/uploads/*
+!backend/data/uploads/.gitkeep
+
+# OS
+.DS_Store
