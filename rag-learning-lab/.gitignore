@@ -13,4 +13,5 @@ backend/data/uploads/*
 # OS
 .DS_Store
 #workspace 
-basic rag.code-workspace
+*.code-workspace
+
