@@ -2,33 +2,95 @@
 
 This project is being built incrementally to teach the fundamentals of a Retrieval-Augmented Generation (RAG) system without hiding the important concepts behind frameworks.
 
+## Stage progression
+
+### Stage 1: PDF extraction
+
+- Upload a PDF
+- Save it to disk
+- Extract page text with PyMuPDF
+- Clean the raw text before further processing
+
+### Stage 2: Chunking
+
+- Split long text into fixed-size chunks
+- Add overlap between chunks
+- Keep page and chunk metadata for traceability
+
+### Stage 3: Embeddings
+
+- Convert text chunks into numerical vectors
+- Separate embedding responsibilities from LLM responsibilities
+- Prepare the data for semantic retrieval in the next stage
+
+---
+
 ## Current stage
 
-Stage 1: PDF extraction.
+Stage 3: Embeddings.
 
 ### What this stage teaches
 
-- Why PDF extraction is the first step in a RAG pipeline
-- What text extraction means in practice
-- Why we clean the extracted text before saving or chunking it
-- Why the ingestion flow should be separated from query-time logic
+- What an embedding is
+- Why embeddings are useful for semantic search
+- Why we use a separate embedding layer from the LLM layer
+- Why the same embedding model should generally be used consistently for stored documents and queries
+- Why the embedding model is not the same thing as the generation model
 
 ### Architecture in this stage
 
-- Upload API receives a PDF
-- PDF is saved to disk
-- PyMuPDF extracts text page by page
-- Text is cleaned and normalized
-- The extracted content is returned for later chunking and embedding stages
+- Text chunks are passed to an embedding provider
+- The provider converts text into vectors
+- The query text is also embedded into a vector
+- Those vectors are later compared in the vector store for similarity search
+
+### Important distinction
+
+Embedding model:
+- converts text into vectors
+
+LLM:
+- consumes context + question and generates an answer
+
+These are different jobs.
 
 ### Why this matters
 
-Without clean text, the downstream stages cannot work properly:
+If embeddings are poor or inconsistent:
 
-- chunking would split messy text
-- embeddings would be built from poor quality inputs
-- semantic retrieval would return low-quality results
-- the LLM would get noisy context
+- retrieval quality is weak
+- similar meaning may not be picked up
+- the LLM may receive irrelevant context
+- the answer may be grounded in the wrong chunks
+
+---
+
+## Learning notes for this stage
+
+### What is an embedding?
+An embedding is a dense numerical vector that represents the meaning of text in a high-dimensional space.
+
+### Why embeddings help
+Similar ideas tend to produce vectors that are close together in embedding space. This allows a semantic search system to match questions with relevant document chunks even when the words are not identical.
+
+### Why keyword matching is different
+Keyword search matches exact words or phrase overlap. Semantic search tries to measure meaning similarity between vectors. This is why a question can retrieve a relevant passage even if it does not use the same exact wording.
+
+### Why provider abstraction matters
+The retrieval pipeline should depend on an interface like:
+
+```python
+class EmbeddingProvider:
+    def embed_documents(self, texts):
+        pass
+
+    def embed_query(self, text):
+        pass
+```
+
+This means the application can later switch between embedding providers without rewriting the retrieval logic.
+
+---
 
 ## Run locally
 
@@ -47,16 +109,26 @@ curl -X POST "http://localhost:8000/documents/upload" \
   -F "file=@sample.pdf"
 ```
 
-## What the API returns
+---
 
-The endpoint returns:
+## Stage 3 code structure
 
-- filename
-- page count
-- extracted page text
+```text
+backend/app/embeddings/
+  base.py
+  factory.py
+```
 
-This is intentionally simple so the next stage can focus on chunking without the rest of the pipeline hiding the details.
+The application now includes a simple local embedding provider stub that demonstrates the abstraction and teaches the interface shape before a real provider is added.
+
+---
+
+## Current verification status
+
+The chunking tests were verified, and the embedding interface is tested through a simple provider contract check.
+
+---
 
 ## Next stage
 
-After verifying PDF extraction, the next step is chunking with fixed-size chunks and overlap.
+After embeddings, the next step is vector storage and semantic retrieval using similarity search.
