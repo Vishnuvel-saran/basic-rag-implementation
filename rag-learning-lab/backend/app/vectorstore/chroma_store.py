@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.config.settings import settings
+
 
 class ChromaVectorStore:
     """A tiny in-memory vector store that teaches the Chroma-style retrieval pattern.
@@ -36,7 +38,10 @@ class ChromaVectorStore:
             }
         )
 
-    def query(self, query_vector: list[float], top_k: int = 5) -> list[dict[str, Any]]:
+    def query(
+        self, query_vector: list[float], top_k: int | None = None
+    ) -> list[dict[str, Any]]:
+        effective_top_k = settings.top_k if top_k is None else top_k
         scored: list[tuple[float, dict[str, Any]]] = []
 
         for item in self._items:
@@ -44,7 +49,7 @@ class ChromaVectorStore:
             scored.append((similarity, item))
 
         scored.sort(key=lambda pair: pair[0], reverse=True)
-        return [item for _, item in scored[:top_k]]
+        return [item for _, item in scored[:effective_top_k]]
 
     @staticmethod
     def _cosine_similarity(a: list[float], b: list[float]) -> float:

@@ -44,7 +44,7 @@ async def upload_document(
         page["document_id"] = file.filename
         page["filename"] = file.filename
 
-    effective_chunk_size = chunk_size or settings.chunk_size
+    effective_chunk_size = chunk_size if chunk_size is not None else settings.chunk_size
     effective_chunk_overlap = (
         chunk_overlap if chunk_overlap is not None else settings.chunk_overlap
     )

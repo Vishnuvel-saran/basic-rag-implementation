@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.config.settings import settings
 from app.embeddings.base import EmbeddingProvider
 from app.llm.base import LLMProvider
 from app.rag.prompt_builder import PromptBuilder
@@ -22,10 +23,12 @@ class RAGPipeline:
         embedding_provider: EmbeddingProvider,
         vector_store: SimpleVectorStore,
         llm_provider: LLMProvider,
+        top_k: int | None = None,
     ):
         self.embedding_provider = embedding_provider
         self.vector_store = vector_store
         self.llm_provider = llm_provider
+        self.top_k = top_k if top_k is not None else settings.top_k
 
     def index_chunks(self, chunks: list[dict]) -> list[dict]:
         if not chunks:
@@ -52,18 +55,19 @@ class RAGPipeline:
 
         return stored_items
 
-    def query(self, question: str, top_k: int = 5) -> dict:
+    def query(self, question: str, top_k: int | None = None) -> dict:
+        effective_top_k = self.top_k if top_k is None else top_k
         query_vector = self.embedding_provider.embed_query(question)
         retrieved_chunks = self.vector_store.query(
-            query_vector=query_vector, top_k=top_k
+            query_vector=query_vector, top_k=effective_top_k
         )
 
-        prompt = PromptBuilder.build(question, retrieved_chunks, top_k=top_k)
+        prompt = PromptBuilder.build(question, retrieved_chunks, top_k=effective_top_k)
         answer = self.llm_provider.generate(prompt)
 
         return {
             "question": question,
-            "top_k": top_k,
+            "top_k": effective_top_k,
             "retrieved_chunks": retrieved_chunks,
             "answer": answer,
             "prompt": prompt,
