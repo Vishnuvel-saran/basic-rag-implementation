@@ -3,15 +3,25 @@ from __future__ import annotations
 from typing import Any
 
 
-class SimpleVectorStore:
-    """A tiny in-memory vector store used to teach the retrieval concept.
+class ChromaVectorStore:
+    """A tiny in-memory vector store that teaches the Chroma-style retrieval pattern.
 
-    In a real project, this would be backed by ChromaDB or another vector database.
-    This class demonstrates the important idea: storing text + vector + metadata and
-    then retrieving the nearest chunks by similarity.
+    Real ChromaDB stores:
+    - the text chunk
+    - its embedding vector
+    - associated metadata such as document id, page number, chunk id
+    - a collection identifier to group related documents
+
+    The logic here keeps the same conceptual model while staying simple and beginner-friendly.
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        collection_name: str = "rag_documents",
+        persist_directory: str | None = None,
+    ):
+        self.collection_name = collection_name
+        self.persist_directory = persist_directory
         self._items: list[dict[str, Any]] = []
 
     def add(
@@ -51,3 +61,9 @@ class SimpleVectorStore:
             return 0.0
 
         return dot / (mag_a * mag_b)
+
+
+class SimpleVectorStore(ChromaVectorStore):
+    """Backward-compatible alias used by earlier code paths."""
+
+    pass

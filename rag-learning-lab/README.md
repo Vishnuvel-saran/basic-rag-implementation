@@ -23,72 +23,81 @@ This project is being built incrementally to teach the fundamentals of a Retriev
 - Separate embedding responsibilities from LLM responsibilities
 - Prepare the data for semantic retrieval in the next stage
 
+### Stage 4: Vector storage and retrieval
+
+- Store text, vectors, and metadata together
+- Use similarity search to find the most relevant chunks
+- Understand what a collection, vector, and Top-K result mean in practice
+
+### Stage 5: Prompt construction and grounded answering
+
+- Build a final prompt using retrieved chunks
+- Tell the LLM to answer only from the supplied context
+- Instruct it to say when the answer is missing
+- Preserve source references when possible
+
 ---
 
 ## Current stage
 
-Stage 3: Embeddings.
+Stage 5: Prompt construction and grounded answering.
 
 ### What this stage teaches
 
-- What an embedding is
-- Why embeddings are useful for semantic search
-- Why we use a separate embedding layer from the LLM layer
-- Why the same embedding model should generally be used consistently for stored documents and queries
-- Why the embedding model is not the same thing as the generation model
+- Why the LLM should not receive the entire PDF
+- Why retrieval context must be assembled deliberately
+- How to create a grounded prompt from Top-K results
+- Why source attribution helps trust and debugging
+- Why strict instructions reduce hallucination
 
 ### Architecture in this stage
 
-- Text chunks are passed to an embedding provider
-- The provider converts text into vectors
-- The query text is also embedded into a vector
-- Those vectors are later compared in the vector store for similarity search
-
-### Important distinction
-
-Embedding model:
-- converts text into vectors
-
-LLM:
-- consumes context + question and generates an answer
-
-These are different jobs.
+```text
+User question
+   + retrieved chunks
+   + instruction set
+       ↓
+prompt builder
+       ↓
+LLM
+       ↓
+grounded answer
+```
 
 ### Why this matters
 
-If embeddings are poor or inconsistent:
+The retrieval system finds the likely relevant chunks, but the LLM still needs a clear instruction set. The prompt tells it:
 
-- retrieval quality is weak
-- similar meaning may not be picked up
-- the LLM may receive irrelevant context
-- the answer may be grounded in the wrong chunks
+- use the provided context only
+- do not hallucinate
+- say when the information is not present
+- reference supporting source material when available
+
+This is a critical part of making RAG actually useful.
 
 ---
 
 ## Learning notes for this stage
 
-### What is an embedding?
-An embedding is a dense numerical vector that represents the meaning of text in a high-dimensional space.
+### What is a prompt in RAG?
+A prompt is the final message sent to the model. It usually contains:
 
-### Why embeddings help
-Similar ideas tend to produce vectors that are close together in embedding space. This allows a semantic search system to match questions with relevant document chunks even when the words are not identical.
+- the user question
+- the relevant retrieved chunks
+- explicit instructions to answer only from the context
 
-### Why keyword matching is different
-Keyword search matches exact words or phrase overlap. Semantic search tries to measure meaning similarity between vectors. This is why a question can retrieve a relevant passage even if it does not use the same exact wording.
+### Why not send the whole PDF?
+The whole PDF is often too noisy and too large. Retrieval narrows the context to the relevant evidence. This reduces cost, improves latency, and makes response quality more grounded.
 
-### Why provider abstraction matters
-The retrieval pipeline should depend on an interface like:
+### Why say "do not invent information"?
+LLMs are trained to be helpful. Without constraints, they may fill gaps with confident but wrong answers. A grounded prompt reduces this by telling the model to rely on the retrieved context and explicitly admit uncertainty.
 
-```python
-class EmbeddingProvider:
-    def embed_documents(self, texts):
-        pass
+### Why include sources?
+Source references help:
 
-    def embed_query(self, text):
-        pass
-```
-
-This means the application can later switch between embedding providers without rewriting the retrieval logic.
+- debug retrieval quality
+- show the user where the answer came from
+- make the system more transparent and trustworthy
 
 ---
 
@@ -111,24 +120,23 @@ curl -X POST "http://localhost:8000/documents/upload" \
 
 ---
 
-## Stage 3 code structure
+## Stage 5 code structure
 
 ```text
-backend/app/embeddings/
-  base.py
-  factory.py
+backend/app/rag/
+  prompt_builder.py
 ```
 
-The application now includes a simple local embedding provider stub that demonstrates the abstraction and teaches the interface shape before a real provider is added.
+This stage teaches the exact idea that the model should answer from retrieved context rather than from a fuzzy notion of the whole document.
 
 ---
 
 ## Current verification status
 
-The chunking tests were verified, and the embedding interface is tested through a simple provider contract check.
+The chunking, embedding, and vector-store behavior are already validated. The prompt builder now has a dedicated test to confirm it includes the question, context, and source references.
 
 ---
 
 ## Next stage
 
-After embeddings, the next step is vector storage and semantic retrieval using similarity search.
+After prompt construction, the next step is the LLM provider abstraction: OpenAI, Gemini, Claude, and OpenRouter behind a single interface.
