@@ -8,8 +8,8 @@ venv/
 .env
 
 # Uploaded data
-backend/data/uploads/*
-!backend/data/uploads/.gitkeep
+rag-learning-lab/backend/data/uploads/*
+!rag-learning-lab/backend/data/uploads/.gitkeep
 # OS
 .DS_Store
 #workspace 
