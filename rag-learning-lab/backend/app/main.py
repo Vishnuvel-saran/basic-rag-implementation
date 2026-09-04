@@ -46,15 +46,11 @@ async def upload_document(
 
     return {
         "message": "PDF uploaded, extracted, and chunked successfully.",
-    }
-
-
-"""
-"filename": extracted_document["filename"],
+        "filename": extracted_document["filename"],
         "page_count": extracted_document["page_count"],
         "pages": extracted_document["pages"],
         "chunk_size": effective_chunk_size,
         "chunk_overlap": effective_chunk_overlap,
         "chunk_count": len(chunks),
         "chunks": chunks,
-"""
+    }

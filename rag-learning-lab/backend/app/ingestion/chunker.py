@@ -26,8 +26,7 @@ def split_text_into_chunks(text: str, chunk_size: int, chunk_overlap: int) -> Li
         chunks.append(" ".join(chunk_words))
         if end >= len(words):
             break
-    for i in range(len(chunks)):
-        print(i, chunks[i], flush=True)
+
     return chunks
 
 
