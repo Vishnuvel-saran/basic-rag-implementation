@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.config.settings import settings
+
 
 class PromptBuilder:
     """Constructs a grounded prompt using the retrieved context.
@@ -9,9 +11,12 @@ class PromptBuilder:
     """
 
     @staticmethod
-    def build(question: str, retrieved_chunks: list[dict], top_k: int = 5) -> str:
+    def build(
+        question: str, retrieved_chunks: list[dict], top_k: int | None = None
+    ) -> str:
+        effective_top_k = settings.top_k if top_k is None else top_k
         context_blocks = []
-        for index, chunk in enumerate(retrieved_chunks[:top_k], start=1):
+        for index, chunk in enumerate(retrieved_chunks[:effective_top_k], start=1):
             metadata = chunk.get("metadata", {})
             source = metadata.get("filename") or "unknown-document"
             page = metadata.get("page_number", "?")
