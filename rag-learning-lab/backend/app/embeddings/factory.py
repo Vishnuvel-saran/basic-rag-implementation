@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import os
+
+from app.config.settings import settings
 from app.embeddings.base import EmbeddingProvider
+from app.embeddings.providers.openrouter import OpenRouterEmbeddingProvider
 
 
 class LocalDummyEmbeddingProvider(EmbeddingProvider):
@@ -31,7 +35,12 @@ class LocalDummyEmbeddingProvider(EmbeddingProvider):
 
 
 def create_embedding_provider(provider_name: str | None = None) -> EmbeddingProvider:
-    provider = (provider_name or "local").lower()
+    provider = (provider_name or os.getenv("EMBEDDING_PROVIDER", "local")).lower()
     if provider in {"local", "dummy"}:
         return LocalDummyEmbeddingProvider()
+    if provider in {"openrouter", "open_router"}:
+        return OpenRouterEmbeddingProvider(
+            api_key=settings.embedding_api_key,
+            model=settings.embedding_model,
+        )
     raise ValueError(f"Unsupported embedding provider: {provider}")

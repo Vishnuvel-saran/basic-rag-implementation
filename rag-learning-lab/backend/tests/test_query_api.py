@@ -20,7 +20,9 @@ def test_query_endpoint_returns_answer_for_indexed_document():
                 "answer": "This is a grounded answer from the supplied context.",
                 "retrieved_chunks": [
                     {
+                        "chunk_id": "2_0",
                         "text": "FastAPI is a Python web framework.",
+                        "vector": [0.1, 0.2, 0.3],
                         "metadata": {"filename": "sample.pdf", "page_number": 2},
                     }
                 ],
@@ -39,3 +41,11 @@ def test_query_endpoint_returns_answer_for_indexed_document():
     assert data["answer"] == "This is a grounded answer from the supplied context."
     assert data["question"] == "What is FastAPI?"
     assert "sample.pdf" in data["sources"][0]
+    assert data["retrieved_chunks"] == [
+        {
+            "chunk_id": "2_0",
+            "context": "FastAPI is a Python web framework.",
+            "metadata": {"filename": "sample.pdf", "page_number": 2},
+        }
+    ]
+    assert "vector" not in data["retrieved_chunks"][0]

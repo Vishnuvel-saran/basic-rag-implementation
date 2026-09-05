@@ -40,7 +40,29 @@ This project is being built incrementally to teach the fundamentals of a Retriev
 
 ## Current stage
 
-Stage 5: Prompt construction and grounded answering.
+Stage 8: Backend RAG pipeline complete; frontend next.
+
+The backend now supports the complete learning flow:
+
+```text
+PDF upload
+       -> extraction
+       -> chunking
+       -> OpenRouter embeddings
+       -> in-memory vector retrieval
+       -> grounded prompt
+       -> OpenRouter LLM answer
+```
+
+The next stage is a thin frontend that calls the existing upload and query APIs.
+
+### Current models
+
+- Embeddings: `openai/text-embedding-3-small` through the OpenRouter embeddings API
+- LLM: the model configured by `LLM_MODEL` through the OpenRouter chat completions API
+- Vector store: in-memory Chroma-style store for learning; vectors are not persisted across restarts
+
+Document and query embeddings use the same embedding model. The LLM is independent and can be changed without changing the embedding model.
 
 ### What this stage teaches
 
@@ -118,6 +140,16 @@ curl -X POST "http://localhost:8000/documents/upload" \
   -F "file=@sample.pdf"
 ```
 
+Ask a question:
+
+```bash
+curl -X POST "http://localhost:8000/query" \
+       -H "Content-Type: application/json" \
+       -d '{"question":"What is this document about?","top_k":3}'
+```
+
+The API response returns the answer and compact retrieved chunk details. Each chunk includes its `chunk_id`, `context`, and `metadata`; embedding vectors remain internal and are not returned.
+
 ---
 
 ## Stage 5 code structure
@@ -139,4 +171,4 @@ The chunking, embedding, and vector-store behavior are already validated. The pr
 
 ## Next stage
 
-After prompt construction, the next step is the LLM provider abstraction: OpenAI, Gemini, Claude, and OpenRouter behind a single interface.
+Build the frontend on top of the existing backend APIs. Later learning stages can replace the in-memory vector store with persistent ChromaDB and compare additional embedding providers.

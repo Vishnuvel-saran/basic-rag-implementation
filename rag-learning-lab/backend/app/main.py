@@ -23,6 +23,16 @@ app.state.rag_pipeline = RAGPipeline(
 )
 
 
+def _public_chunk(chunk: dict[str, Any]) -> dict[str, Any]:
+    """Return useful chunk context without exposing internal embedding vectors."""
+    metadata = chunk.get("metadata", {})
+    return {
+        "chunk_id": chunk.get("chunk_id", metadata.get("chunk_id")),
+        "context": chunk.get("text", chunk.get("chunk_text", "")),
+        "metadata": metadata,
+    }
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "app": settings.app_name}
@@ -68,7 +78,7 @@ async def upload_document(
         "chunk_size": effective_chunk_size,
         "chunk_overlap": effective_chunk_overlap,
         "chunk_count": len(indexed_chunks),
-        "chunks": indexed_chunks,
+        "chunks": [_public_chunk(chunk) for chunk in indexed_chunks],
     }
 
 
@@ -100,6 +110,8 @@ async def query_document(payload: dict[str, Any]) -> dict[str, Any]:
         "answer": result["answer"],
         "top_k": result["top_k"],
         "sources": sources,
-        "retrieved_chunks": result["retrieved_chunks"],
+        "retrieved_chunks": [
+            _public_chunk(chunk) for chunk in result["retrieved_chunks"]
+        ],
         "prompt": result["prompt"],
     }

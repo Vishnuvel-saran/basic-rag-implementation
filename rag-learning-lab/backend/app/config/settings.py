@@ -31,6 +31,9 @@ class Settings:
     llm_provider: str = os.getenv("LLM_PROVIDER", "openrouter")
     llm_model: str = os.getenv("LLM_MODEL", "openai/gpt-4o-mini")
     openrouter_api_key: str = os.getenv("OPENROUTER_API_KEY", "")
+    embedding_api_key: str = os.getenv(
+        "EMBEDDING_API_KEY", os.getenv("OPENROUTER_API_KEY", "")
+    )
     embedding_provider: str = os.getenv("EMBEDDING_PROVIDER", "local")
     embedding_model: str = os.getenv("EMBEDDING_MODEL", "local-dummy-model")
 
