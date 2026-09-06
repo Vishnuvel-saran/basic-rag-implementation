@@ -16,3 +16,7 @@ rag-learning-lab/backend/data/uploads/*
 *.code-workspace
 **/NUL
 
+# Frontend
+rag-learning-lab/frontend/node_modules/
+rag-learning-lab/frontend/dist/
+

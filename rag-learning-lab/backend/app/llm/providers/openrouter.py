@@ -18,19 +18,26 @@ class OpenRouterProvider(LLMProvider):
         self.api_key = api_key or os.getenv("OPENROUTER_API_KEY", "")
         self.model = model or os.getenv("LLM_MODEL", "openai/gpt-4o-mini")
 
-    def build_payload(self, prompt: str) -> dict:
+    def build_payload(self, prompt: str, **kwargs) -> dict:
         return {
-            "model": self.model,
+            "model": kwargs.get("model") or self.model,
             "messages": [{"role": "user", "content": prompt}],
         }
 
     def generate(self, prompt: str, **kwargs) -> str:
+        return self.generate_with_metadata(prompt, **kwargs)["answer"]
+
+    def generate_with_metadata(self, prompt: str, **kwargs) -> dict:
         if not self.api_key:
             raise ValueError(
                 "OPENROUTER_API_KEY is required to use the OpenRouter provider."
             )
 
-        payload = self.build_payload(prompt)
+        payload = self.build_payload(prompt, model=kwargs.get("model"))
+        if kwargs.get("temperature") is not None:
+            payload["temperature"] = kwargs["temperature"]
+        if kwargs.get("max_output_tokens") is not None:
+            payload["max_tokens"] = kwargs["max_output_tokens"]
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -52,4 +59,8 @@ class OpenRouterProvider(LLMProvider):
             raise ValueError("OpenRouter returned no message choices.")
 
         message = choices[0].get("message", {})
-        return message.get("content", "")
+        return {
+            "answer": message.get("content", ""),
+            "usage": data.get("usage"),
+            "model": data.get("model", self.model),
+        }

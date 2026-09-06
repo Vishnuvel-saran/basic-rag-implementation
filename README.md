@@ -85,6 +85,16 @@ pip install -r requirements.txt
 python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
+In a second terminal, start the frontend:
+
+```bash
+cd rag-learning-lab/frontend
+npm install
+npm run dev
+```
+
+Open the URL printed by Vite, normally `http://localhost:5173`.
+
 ## API Usage
 
 Upload and index a PDF:

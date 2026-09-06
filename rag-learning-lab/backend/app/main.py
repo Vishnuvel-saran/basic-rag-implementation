@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import time
+from inspect import signature
 from typing import Any
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.config.settings import settings
 from app.embeddings.factory import create_embedding_provider
@@ -13,6 +16,20 @@ from app.rag.pipeline import RAGPipeline
 from app.vectorstore.chroma_store import SimpleVectorStore
 
 app = FastAPI(title=settings.app_name)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+        "http://localhost:5180",
+        "http://127.0.0.1:5180",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.state.vector_store = SimpleVectorStore()
 app.state.embedding_provider = create_embedding_provider(settings.embedding_provider)
 app.state.llm_provider = create_llm_provider(settings.llm_provider)
@@ -26,11 +43,14 @@ app.state.rag_pipeline = RAGPipeline(
 def _public_chunk(chunk: dict[str, Any]) -> dict[str, Any]:
     """Return useful chunk context without exposing internal embedding vectors."""
     metadata = chunk.get("metadata", {})
-    return {
+    public_chunk = {
         "chunk_id": chunk.get("chunk_id", metadata.get("chunk_id")),
         "context": chunk.get("text", chunk.get("chunk_text", "")),
         "metadata": metadata,
     }
+    if chunk.get("similarity_score") is not None:
+        public_chunk["similarity_score"] = chunk["similarity_score"]
+    return public_chunk
 
 
 @app.get("/health")
@@ -97,13 +117,50 @@ async def query_document(payload: dict[str, Any]) -> dict[str, Any]:
             status_code=400, detail="'top_k' must be a positive integer."
         )
 
-    result = app.state.rag_pipeline.query(question, top_k=top_k)
+    temperature = payload.get("temperature", settings.llm_temperature)
+    max_output_tokens = payload.get("max_output_tokens", settings.llm_max_output_tokens)
+    model = payload.get("model", settings.llm_model)
+    if not isinstance(temperature, (int, float)) or not 0 <= temperature <= 2:
+        raise HTTPException(
+            status_code=400, detail="'temperature' must be between 0 and 2."
+        )
+    if not isinstance(max_output_tokens, int) or max_output_tokens <= 0:
+        raise HTTPException(
+            status_code=400, detail="'max_output_tokens' must be positive."
+        )
+    if not isinstance(model, str) or not model.strip():
+        raise HTTPException(
+            status_code=400, detail="'model' must be a non-empty string."
+        )
+
+    started_at = time.perf_counter()
+    query_options = {
+        "temperature": temperature,
+        "max_output_tokens": max_output_tokens,
+        "model": model,
+    }
+    query_method = app.state.rag_pipeline.query
+    if "llm_options" in signature(query_method).parameters:
+        result = query_method(question, top_k=top_k, llm_options=query_options)
+    else:
+        result = query_method(question, top_k=top_k)
+    latency_ms = round((time.perf_counter() - started_at) * 1000, 2)
     sources = []
     for chunk in result.get("retrieved_chunks", []):
         metadata = chunk.get("metadata", {})
         sources.append(
             f"{metadata.get('filename', 'unknown')} | page {metadata.get('page_number', '?')}"
         )
+
+    usage = result.get("llm", {}).get("usage")
+    telemetry = {
+        "input_tokens": usage.get("prompt_tokens") if usage else None,
+        "output_tokens": usage.get("completion_tokens") if usage else None,
+        "total_tokens": usage.get("total_tokens") if usage else None,
+        "token_source": "actual" if usage else "not_provided",
+        "latency_ms": latency_ms,
+        "estimated_cost": None,
+    }
 
     return {
         "question": result["question"],
@@ -114,4 +171,22 @@ async def query_document(payload: dict[str, Any]) -> dict[str, Any]:
             _public_chunk(chunk) for chunk in result["retrieved_chunks"]
         ],
         "prompt": result["prompt"],
+        "retrieval": {
+            "top_k": result["top_k"],
+            "similarity_metric": "cosine",
+            "total_chunks_searched": len(app.state.vector_store._items),
+            "embedding_model": settings.embedding_model,
+            "embedding_dimension": (
+                len(result["retrieved_chunks"][0]["vector"])
+                if result["retrieved_chunks"]
+                else None
+            ),
+        },
+        "llm": {
+            "model": result.get("llm", {}).get("model", model),
+            "temperature": temperature,
+            "max_output_tokens": max_output_tokens,
+            "context_window": "provider managed",
+        },
+        "telemetry": telemetry,
     }
