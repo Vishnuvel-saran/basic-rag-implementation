@@ -34,6 +34,10 @@ class RAGPipeline:
         if not chunks:
             return []
 
+        document_ids = {str(chunk.get("document_id", "unknown")) for chunk in chunks}
+        for document_id in document_ids:
+            self.vector_store.delete_by_document_id(document_id)
+
         texts = [chunk.get("chunk_text", "") for chunk in chunks]
         document_vectors = self.embedding_provider.embed_documents(texts)
 
@@ -44,6 +48,9 @@ class RAGPipeline:
                 "filename": chunk.get("filename", "unknown"),
                 "page_number": chunk.get("page_number", 0),
                 "chunk_id": chunk.get("chunk_id", "unknown"),
+                "chunking_strategy": chunk.get("chunking_strategy", "fixed"),
+                "chunk_index": chunk.get("chunk_index", 0),
+                "chunk_size": chunk.get("chunk_size"),
             }
             self.vector_store.add(
                 chunk_id=str(metadata["chunk_id"]),
@@ -55,7 +62,12 @@ class RAGPipeline:
 
         return stored_items
 
-    def query(self, question: str, top_k: int | None = None) -> dict:
+    def query(
+        self,
+        question: str,
+        top_k: int | None = None,
+        llm_options: dict | None = None,
+    ) -> dict:
         effective_top_k = self.top_k if top_k is None else top_k
         query_vector = self.embedding_provider.embed_query(question)
         retrieved_chunks = self.vector_store.query(
@@ -63,7 +75,17 @@ class RAGPipeline:
         )
 
         prompt = PromptBuilder.build(question, retrieved_chunks, top_k=effective_top_k)
-        answer = self.llm_provider.generate(prompt)
+        llm_options = {
+            "temperature": settings.llm_temperature,
+            "max_output_tokens": settings.llm_max_output_tokens,
+            **(llm_options or {}),
+        }
+        if hasattr(self.llm_provider, "generate_with_metadata"):
+            llm_result = self.llm_provider.generate_with_metadata(prompt, **llm_options)
+            answer = llm_result["answer"]
+        else:
+            answer = self.llm_provider.generate(prompt, **llm_options)
+            llm_result = {"answer": answer, "usage": None}
 
         return {
             "question": question,
@@ -71,4 +93,5 @@ class RAGPipeline:
             "retrieved_chunks": retrieved_chunks,
             "answer": answer,
             "prompt": prompt,
+            "llm": llm_result,
         }

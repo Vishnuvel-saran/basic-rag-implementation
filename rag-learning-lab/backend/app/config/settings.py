@@ -21,16 +21,33 @@ def _get_int(name: str, default: int) -> int:
         raise ValueError(f"{name} must be an integer") from exc
 
 
+def _get_float(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a number") from exc
+
+
 @dataclass(frozen=True)
 class Settings:
     app_name: str = os.getenv("APP_NAME", "rag-learning-lab")
     upload_dir: str = os.getenv("UPLOAD_DIR", "data/uploads")
     chunk_size: int = _get_int("CHUNK_SIZE", 800)
     chunk_overlap: int = _get_int("CHUNK_OVERLAP", 100)
+    chunking_strategy: str = os.getenv("CHUNKING_STRATEGY", "fixed")
+    semantic_threshold: float = _get_float("SEMANTIC_THRESHOLD", 0.75)
     top_k: int = _get_int("TOP_K", 5)
     llm_provider: str = os.getenv("LLM_PROVIDER", "openrouter")
     llm_model: str = os.getenv("LLM_MODEL", "openai/gpt-4o-mini")
+    llm_temperature: float = _get_float("LLM_TEMPERATURE", 0.0)
+    llm_max_output_tokens: int = _get_int("LLM_MAX_OUTPUT_TOKENS", 800)
     openrouter_api_key: str = os.getenv("OPENROUTER_API_KEY", "")
+    embedding_api_key: str = os.getenv(
+        "EMBEDDING_API_KEY", os.getenv("OPENROUTER_API_KEY", "")
+    )
     embedding_provider: str = os.getenv("EMBEDDING_PROVIDER", "local")
     embedding_model: str = os.getenv("EMBEDDING_MODEL", "local-dummy-model")
 

@@ -38,6 +38,13 @@ class ChromaVectorStore:
             }
         )
 
+    def delete_by_document_id(self, document_id: str) -> None:
+        self._items = [
+            item
+            for item in self._items
+            if item["metadata"].get("document_id") != document_id
+        ]
+
     def query(
         self, query_vector: list[float], top_k: int | None = None
     ) -> list[dict[str, Any]]:
@@ -49,7 +56,10 @@ class ChromaVectorStore:
             scored.append((similarity, item))
 
         scored.sort(key=lambda pair: pair[0], reverse=True)
-        return [item for _, item in scored[:effective_top_k]]
+        return [
+            {**item, "similarity_score": round(score, 6)}
+            for score, item in scored[:effective_top_k]
+        ]
 
     @staticmethod
     def _cosine_similarity(a: list[float], b: list[float]) -> float:
