@@ -48,6 +48,9 @@ class RAGPipeline:
                 "filename": chunk.get("filename", "unknown"),
                 "page_number": chunk.get("page_number", 0),
                 "chunk_id": chunk.get("chunk_id", "unknown"),
+                "chunking_strategy": chunk.get("chunking_strategy", "fixed"),
+                "chunk_index": chunk.get("chunk_index", 0),
+                "chunk_size": chunk.get("chunk_size"),
             }
             self.vector_store.add(
                 chunk_id=str(metadata["chunk_id"]),

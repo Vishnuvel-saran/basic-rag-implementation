@@ -28,6 +28,28 @@ PDF upload
 
 Document chunks and user queries use the same embedding model. The embedding model and LLM are separate components and can be changed independently.
 
+## Chunking Strategies
+
+The frontend lets you choose the chunker before processing a PDF:
+
+- `fixed`: word windows with configurable size and overlap
+- `sentence`: groups complete sentences up to the target size
+- `paragraph`: keeps paragraph boundaries and falls back to fixed windows for oversized paragraphs
+- `recursive`: tries paragraph, line, sentence, and word boundaries in that order
+- `semantic`: embeds adjacent sentences and starts a new chunk when their cosine similarity crosses the configured threshold
+
+The ingestion boundary is deliberately strategy-based:
+
+```text
+document text -> ChunkerFactory -> Chunker.chunk(text) -> chunks -> embeddings -> vector store
+```
+
+The RAG pipeline does not know which chunker produced the chunks. Each chunk records `chunking_strategy`, `chunk_index`, page metadata, and its text for inspection. Semantic chunking currently uses the configured embedding provider for boundary analysis, while the final chunks are embedded again for retrieval; these are separate responsibilities even when they use the same model.
+
+### Comparing strategies
+
+For a controlled experiment, keep the PDF, embedding model, Top-K, questions, LLM, and prompt constant. Process the same PDF with each strategy, inspect the generated chunks, ask the same questions, and compare retrieved chunk IDs, similarity scores, prompt context, latency, and answer quality. Reprocessing a document replaces its previous active vectors, so chunks from an older strategy cannot contaminate retrieval.
+
 The current vector store is in memory, so uploaded documents must be uploaded again after restarting the server. Persistent ChromaDB can be added in a later stage.
 
 ## Project Structure
@@ -70,7 +92,7 @@ LLM_MODEL=openai/gpt-4o-mini
 OPENROUTER_API_KEY=your_openrouter_api_key_here
 ```
 
-`CHUNK_SIZE`, `CHUNK_OVERLAP`, and `TOP_K` are used as application defaults. A query can still provide its own `top_k` value.
+`CHUNKING_STRATEGY`, `CHUNK_SIZE`, `CHUNK_OVERLAP`, `SEMANTIC_THRESHOLD`, and `TOP_K` are used as application defaults. Upload requests can override the strategy and relevant chunking values; a query can still provide its own `top_k` value.
 
 Keep `.env` private and never commit API keys.
 
@@ -108,6 +130,13 @@ Override chunking for one upload:
 
 ```bash
 curl -X POST "http://localhost:8000/documents/upload?chunk_size=400&chunk_overlap=50" \
+  -F 'file=@sample.pdf'
+```
+
+Choose a strategy explicitly:
+
+```bash
+curl -X POST "http://localhost:8000/documents/upload?chunking_strategy=semantic&chunk_size=400&semantic_threshold=0.75" \
   -F 'file=@sample.pdf'
 ```
 
@@ -156,7 +185,6 @@ Completed:
 
 Next:
 
-1. Build a simple frontend for upload and question answering
-2. Add persistent ChromaDB storage
-3. Compare embedding models and retrieval quality
-4. Add evaluation examples for chunking and retrieval
+1. Add persistent ChromaDB storage
+2. Compare embedding models and retrieval quality
+3. Add evaluation examples for chunking and retrieval

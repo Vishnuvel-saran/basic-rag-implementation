@@ -37,6 +37,8 @@ class Settings:
     upload_dir: str = os.getenv("UPLOAD_DIR", "data/uploads")
     chunk_size: int = _get_int("CHUNK_SIZE", 800)
     chunk_overlap: int = _get_int("CHUNK_OVERLAP", 100)
+    chunking_strategy: str = os.getenv("CHUNKING_STRATEGY", "fixed")
+    semantic_threshold: float = _get_float("SEMANTIC_THRESHOLD", 0.75)
     top_k: int = _get_int("TOP_K", 5)
     llm_provider: str = os.getenv("LLM_PROVIDER", "openrouter")
     llm_model: str = os.getenv("LLM_MODEL", "openai/gpt-4o-mini")

@@ -61,8 +61,10 @@ def health() -> dict[str, str]:
 @app.post("/documents/upload")
 async def upload_document(
     file: UploadFile = File(...),
+    chunking_strategy: str = Query(default=settings.chunking_strategy),
     chunk_size: int | None = Query(default=None, gt=0),
     chunk_overlap: int | None = Query(default=None, ge=0),
+    semantic_threshold: float | None = Query(default=None, ge=0, le=1),
 ) -> dict[str, object]:
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
@@ -78,12 +80,20 @@ async def upload_document(
     effective_chunk_overlap = (
         chunk_overlap if chunk_overlap is not None else settings.chunk_overlap
     )
+    effective_semantic_threshold = (
+        semantic_threshold
+        if semantic_threshold is not None
+        else settings.semantic_threshold
+    )
 
     try:
         chunks = chunk_document_pages(
             extracted_document["pages"],
             chunk_size=effective_chunk_size,
             chunk_overlap=effective_chunk_overlap,
+            strategy=chunking_strategy,
+            semantic_threshold=effective_semantic_threshold,
+            embedding_provider=app.state.embedding_provider,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -97,6 +107,8 @@ async def upload_document(
         "pages": extracted_document["pages"],
         "chunk_size": effective_chunk_size,
         "chunk_overlap": effective_chunk_overlap,
+        "chunking_strategy": chunking_strategy,
+        "semantic_threshold": effective_semantic_threshold,
         "chunk_count": len(indexed_chunks),
         "chunks": [_public_chunk(chunk) for chunk in indexed_chunks],
     }

@@ -13,6 +13,8 @@ function App() {
   const [documentInfo, setDocumentInfo] = useState(null);
   const [chunkSize, setChunkSize] = useState(400);
   const [chunkOverlap, setChunkOverlap] = useState(50);
+  const [chunkingStrategy, setChunkingStrategy] = useState("fixed");
+  const [semanticThreshold, setSemanticThreshold] = useState(0.75);
   const [chunkSearch, setChunkSearch] = useState("");
   const [question, setQuestion] = useState("");
   const [topK, setTopK] = useState(3);
@@ -51,7 +53,17 @@ function App() {
     try {
       const body = new FormData();
       body.append("file", file);
-      const response = await fetch(`${API_URL}/documents/upload?chunk_size=${chunkSize}&chunk_overlap=${chunkOverlap}`, { method: "POST", body });
+      const params = new URLSearchParams({
+        chunking_strategy: chunkingStrategy,
+        chunk_size: String(chunkSize),
+      });
+      if (["fixed", "paragraph", "recursive"].includes(chunkingStrategy)) {
+        params.set("chunk_overlap", String(chunkOverlap));
+      }
+      if (chunkingStrategy === "semantic") {
+        params.set("semantic_threshold", String(semanticThreshold));
+      }
+      const response = await fetch(`${API_URL}/documents/upload?${params}`, { method: "POST", body });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Document processing failed.");
       setChunks(data.chunks || []);
@@ -119,8 +131,10 @@ function App() {
           {file && <div className="file-chip"><FileText size={15} /><span>{file.name}</span><button onClick={() => setFile(null)} aria-label="Remove file"><X size={14} /></button></div>}
           <div className="control-block">
             <div className="control-heading"><span>Chunking controls</span><CircleHelp size={14} /></div>
+            <label className="strategy-control"><span>Chunking strategy</span><select value={chunkingStrategy} onChange={(event) => setChunkingStrategy(event.target.value)}><option value="fixed">Fixed-size</option><option value="sentence">Sentence-based</option><option value="paragraph">Paragraph-based</option><option value="recursive">Recursive</option><option value="semantic">Semantic</option></select></label>
             <NumberControl label="Chunk size" value={chunkSize} onChange={setChunkSize} suffix="words" />
-            <NumberControl label="Overlap" value={chunkOverlap} onChange={setChunkOverlap} suffix="words" />
+            {(chunkingStrategy === "fixed" || chunkingStrategy === "recursive") && <NumberControl label="Overlap" value={chunkOverlap} onChange={setChunkOverlap} suffix="words" />}
+            {chunkingStrategy === "semantic" && <NumberControl label="Threshold" value={semanticThreshold} onChange={setSemanticThreshold} suffix="0–1" step="0.05" min="0" max="1" />}
             <button className="button primary full" disabled={!file || busy} onClick={processDocument}>{busy && stage === "Embedding" ? <LoaderCircle className="spin" size={15} /> : <ArrowDown size={15} />} {busy && stage === "Embedding" ? "Processing..." : "Process document"}</button>
           </div>
           {documentInfo && <div className="document-stats"><span><b>{documentInfo.page_count}</b> pages</span><span><b>{documentInfo.chunk_count}</b> chunks</span></div>}
@@ -141,7 +155,7 @@ function App() {
 
       <section className="chunks-section">
         <div className="section-heading"><PanelLabel number="03" title="Document chunks" icon={<FileText size={16} />} /><span className="count-pill">{visibleChunks.length} / {chunks.length}</span></div>
-        <div className="chunk-toolbar"><div className="search-field"><Search size={15} /><input value={chunkSearch} onChange={(event) => setChunkSearch(event.target.value)} placeholder="Filter chunks by text, page, or ID..." /></div><span className="muted">Chunk size {chunkSize} · overlap {chunkOverlap}</span></div>
+        <div className="chunk-toolbar"><div className="search-field"><Search size={15} /><input value={chunkSearch} onChange={(event) => setChunkSearch(event.target.value)} placeholder="Filter chunks by text, page, or ID..." /></div><span className="muted">{documentInfo?.chunking_strategy || chunkingStrategy} · size {chunkSize}</span></div>
         <div className="chunks-grid">{visibleChunks.length ? visibleChunks.map((chunk, index) => <ChunkCard key={`${chunk.chunk_id}-${index}`} chunk={chunk} index={index} />) : <EmptyChunks hasDocument={Boolean(documentInfo)} />}</div>
       </section>
 
@@ -155,7 +169,7 @@ function App() {
 }
 
 function PanelLabel({ number, title, icon }) { return <div className="panel-label"><span className="label-number">{number}</span><span className="label-icon">{icon}</span><h2>{title}</h2></div>; }
-function NumberControl({ label, value, onChange, suffix }) { return <label className="number-control"><span>{label}</span><div><input type="number" min="1" value={value} onChange={(event) => onChange(Number(event.target.value))} /><small>{suffix}</small></div></label>; }
+function NumberControl({ label, value, onChange, suffix, step = "1", min = "1", max }) { return <label className="number-control"><span>{label}</span><div><input type="number" min={min} max={max} step={step} value={value} onChange={(event) => onChange(Number(event.target.value))} /><small>{suffix}</small></div></label>; }
 function Pipeline({ active }) { return <div className="pipeline">{initialStages.map((item, index) => <div className={`pipeline-step ${active === item || (active === "Answer" && item === "Answer") ? "active" : ""}`} key={item}><span className="pipeline-node">{active === item ? <LoaderCircle className="spin" size={14} /> : active === "Answer" && item === "Answer" ? <Check size={14} /> : index + 1}</span><span>{item}</span>{index < initialStages.length - 1 && <i />}</div>)}</div>; }
 function ChunkCard({ chunk, index }) { return <article className="chunk-card"><div className="chunk-card-top"><span className="chunk-id">{chunk.chunk_id || `chunk_${String(index + 1).padStart(3, "0")}`}</span><span>page {chunk.metadata?.page_number ?? "—"}</span></div><p>{chunk.context}</p><div className="chunk-meta"><span>{chunk.context?.length || 0} chars</span><span>~{Math.ceil((chunk.context || "").split(/\s+/).filter(Boolean).length)} tokens</span></div></article>; }
 function EmptyChunks({ hasDocument }) { return <div className="empty-state"><FileText size={23} /><strong>{hasDocument ? "No chunks match your filter" : "Your chunks will appear here"}</strong><span>{hasDocument ? "Try a different search term." : "Upload and process a PDF to inspect the split."}</span></div>; }
