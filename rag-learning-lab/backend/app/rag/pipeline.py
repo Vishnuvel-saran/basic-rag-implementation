@@ -47,6 +47,7 @@ class RAGPipeline:
                 "document_id": chunk.get("document_id", "unknown"),
                 "filename": chunk.get("filename", "unknown"),
                 "page_number": chunk.get("page_number", 0),
+                "page_ids": chunk.get("page_ids", [chunk.get("page_number", 0)]),
                 "chunk_id": chunk.get("chunk_id", "unknown"),
                 "chunking_strategy": chunk.get("chunking_strategy", "fixed"),
                 "chunk_index": chunk.get("chunk_index", 0),

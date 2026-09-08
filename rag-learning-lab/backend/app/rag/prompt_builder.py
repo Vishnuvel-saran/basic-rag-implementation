@@ -19,7 +19,8 @@ class PromptBuilder:
         for index, chunk in enumerate(retrieved_chunks[:effective_top_k], start=1):
             metadata = chunk.get("metadata", {})
             source = metadata.get("filename") or "unknown-document"
-            page = metadata.get("page_number", "?")
+            pages = metadata.get("page_ids") or [metadata.get("page_number", "?")]
+            page = ", ".join(str(page_id) for page_id in pages)
             text = chunk.get("text", "").strip()
             context_blocks.append(f"[Source {index}] {source} | page {page}\n{text}")
 

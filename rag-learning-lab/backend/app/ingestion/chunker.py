@@ -30,26 +30,65 @@ def chunk_document_pages(
         ),
         embedding_provider=embedding_provider,
     )
+    non_empty_pages = [page for page in pages if page.get("text", "").strip()]
+    if not non_empty_pages:
+        return []
+
+    document_text = "\n\n".join(page["text"].strip() for page in non_empty_pages)
+    document_words: list[str] = []
+    word_pages: list[int] = []
+    for page in non_empty_pages:
+        page_words = page["text"].split()
+        document_words.extend(page_words)
+        word_pages.extend([page.get("page_number")] * len(page_words))
+
+    split_chunks = chunker.chunk(document_text)
     chunks: list[dict] = []
-    chunk_index = 0
+    search_start = 0
+    overlap_words = chunk_overlap if strategy.lower() in {"fixed", "recursive"} else 0
 
-    for page in pages:
-        page_text = page.get("text", "")
-        split_chunks = chunker.chunk(page_text)
-
-        for idx, chunk_text in enumerate(split_chunks):
-            chunks.append(
-                {
-                    "document_id": page.get("document_id"),
-                    "filename": page.get("filename"),
-                    "page_number": page.get("page_number"),
-                    "chunk_id": f"chunk_{chunk_index + 1:03d}",
-                    "chunk_text": chunk_text,
-                    "chunking_strategy": strategy,
-                    "chunk_size": chunk_size,
-                    "chunk_index": chunk_index,
-                }
+    for chunk_index, chunk_text in enumerate(split_chunks):
+        chunk_words = chunk_text.split()
+        start = _find_chunk_start(document_words, chunk_words, search_start)
+        if start is None:
+            start = _find_chunk_start(document_words, chunk_words, 0) or 0
+        end = min(start + len(chunk_words), len(word_pages))
+        page_ids = list(dict.fromkeys(word_pages[start:end]))
+        source_page = non_empty_pages[0]
+        if page_ids:
+            source_page = next(
+                page
+                for page in non_empty_pages
+                if page.get("page_number") == page_ids[0]
             )
-            chunk_index += 1
+
+        chunks.append(
+            {
+                "document_id": source_page.get("document_id"),
+                "filename": source_page.get("filename"),
+                "page_number": page_ids[0]
+                if page_ids
+                else source_page.get("page_number"),
+                "page_ids": page_ids,
+                "chunk_id": f"chunk_{chunk_index + 1:03d}",
+                "chunk_text": chunk_text,
+                "chunking_strategy": strategy,
+                "chunk_size": chunk_size,
+                "chunk_index": chunk_index,
+            }
+        )
+        search_start = max(start + len(chunk_words) - overlap_words, start + 1)
 
     return chunks
+
+
+def _find_chunk_start(
+    document_words: list[str], chunk_words: list[str], search_start: int
+) -> int | None:
+    if not chunk_words:
+        return search_start
+    last_start = len(document_words) - len(chunk_words)
+    for start in range(search_start, last_start + 1):
+        if document_words[start : start + len(chunk_words)] == chunk_words:
+            return start
+    return None

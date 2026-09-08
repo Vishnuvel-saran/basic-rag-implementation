@@ -160,8 +160,9 @@ async def query_document(payload: dict[str, Any]) -> dict[str, Any]:
     sources = []
     for chunk in result.get("retrieved_chunks", []):
         metadata = chunk.get("metadata", {})
+        page_ids = metadata.get("page_ids") or [metadata.get("page_number", "?")]
         sources.append(
-            f"{metadata.get('filename', 'unknown')} | page {metadata.get('page_number', '?')}"
+            f"{metadata.get('filename', 'unknown')} | pages {', '.join(str(page) for page in page_ids)}"
         )
 
     usage = result.get("llm", {}).get("usage")

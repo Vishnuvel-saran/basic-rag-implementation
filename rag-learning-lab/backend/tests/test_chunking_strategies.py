@@ -102,3 +102,74 @@ def test_page_chunk_metadata_records_strategy_and_index():
     assert chunks[0]["chunk_id"] == "chunk_001"
     assert chunks[0]["chunking_strategy"] == "sentence"
     assert chunks[0]["chunk_index"] == 0
+
+
+def _pages(first_text: str, second_text: str) -> list[dict]:
+    return [
+        {
+            "page_number": 1,
+            "document_id": "doc-1",
+            "filename": "doc.pdf",
+            "text": first_text,
+        },
+        {
+            "page_number": 2,
+            "document_id": "doc-1",
+            "filename": "doc.pdf",
+            "text": second_text,
+        },
+    ]
+
+
+def test_semantic_chunk_can_cross_related_page_boundary():
+    chunks = chunk_document_pages(
+        _pages("Apple is a fruit.", "Banana is a fruit."),
+        chunk_size=20,
+        chunk_overlap=0,
+        strategy="semantic",
+        semantic_threshold=0.8,
+        embedding_provider=FakeSemanticEmbeddingProvider(),
+    )
+
+    assert len(chunks) == 1
+    assert chunks[0]["page_ids"] == [1, 2]
+    assert "Banana" in chunks[0]["chunk_text"]
+
+
+def test_semantic_chunk_splits_unrelated_topics_not_page_change():
+    chunks = chunk_document_pages(
+        _pages("Apple is a fruit.", "Servers use memory."),
+        chunk_size=20,
+        chunk_overlap=0,
+        strategy="semantic",
+        semantic_threshold=0.8,
+        embedding_provider=FakeSemanticEmbeddingProvider(),
+    )
+
+    assert len(chunks) == 2
+    assert [chunk["page_ids"] for chunk in chunks] == [[1], [2]]
+
+
+def test_all_strategies_receive_cross_page_document_text():
+    strategies = ["fixed", "sentence", "paragraph", "recursive"]
+    for strategy in strategies:
+        chunks = chunk_document_pages(
+            _pages("Alpha topic continues.", "More of the same topic."),
+            chunk_size=50,
+            chunk_overlap=0,
+            strategy=strategy,
+        )
+        assert len(chunks) == 1, strategy
+        assert chunks[0]["page_ids"] == [1, 2], strategy
+
+
+def test_fixed_chunk_size_remains_independent_of_page_boundaries():
+    chunks = chunk_document_pages(
+        _pages("one two three four five", "six seven eight nine ten"),
+        chunk_size=4,
+        chunk_overlap=0,
+        strategy="fixed",
+    )
+
+    assert all(len(chunk["chunk_text"].split()) <= 4 for chunk in chunks)
+    assert any(chunk["page_ids"] == [1, 2] for chunk in chunks)
