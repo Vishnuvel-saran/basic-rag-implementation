@@ -1,0 +1,449 @@
+diff --git a/rag-learning-lab/backend/app/ingestion/chunkers.py b/rag-learning-lab/backend/app/ingestion/chunkers.py
+index ff15bfa..dccfc5d 100644
+--- a/rag-learning-lab/backend/app/ingestion/chunkers.py
++++ b/rag-learning-lab/backend/app/ingestion/chunkers.py
+@@ -27,33 +27,53 @@ class ChunkingConfig:
+             raise ValueError("semantic_threshold must be between 0 and 1")
+ 
+ 
++@dataclass(frozen=True)
++class ChunkSpan:
++    """A chunk's text plus the exact word-index range it covers in the input.
++
++    start/end are indices into `text.split()` of the string originally passed
++    to `chunk_with_offsets`. end is exclusive. These are produced directly by
++    the splitting logic, not reconstructed afterwards by searching for the
++    text again -- that search is what silently misattributes pages when the
++    same phrase (headers, footers, boilerplate) appears more than once.
++    """
++
++    text: str
++    start: int
++    end: int
++
++
+ class Chunker(ABC):
+-    """Strategy boundary: text in, ordered text chunks out."""
++    """Strategy boundary: text in, ordered chunk spans out."""
+ 
+     def __init__(self, config: ChunkingConfig):
+         self.config = config
+ 
+     @abstractmethod
+-    def chunk(self, text: str) -> list[str]:
++    def chunk_with_offsets(self, text: str) -> list[ChunkSpan]:
+         raise NotImplementedError
+ 
++    def chunk(self, text: str) -> list[str]:
++        """Back-compat convenience: text-only view of chunk_with_offsets."""
++        return [span.text for span in self.chunk_with_offsets(text)]
++
+ 
+ class FixedSizeChunker(Chunker):
+     """Split by word windows with configurable overlap."""
+ 
+-    def chunk(self, text: str) -> list[str]:
++    def chunk_with_offsets(self, text: str) -> list[ChunkSpan]:
+         words = text.split()
+         if not words:
+             return []
+ 
+         step = self.config.chunk_size - self.config.chunk_overlap
+-        chunks = []
++        spans: list[ChunkSpan] = []
+         for start in range(0, len(words), step):
+-            end = start + self.config.chunk_size
+-            chunks.append(" ".join(words[start:end]))
+-            if end >= len(words):
++            end = min(start + self.config.chunk_size, len(words))
++            spans.append(ChunkSpan(" ".join(words[start:end]), start, end))
++            if start + self.config.chunk_size >= len(words):
+                 break
+-        return chunks
++        return spans
+ 
+ 
+ class SentenceChunker(Chunker):
+@@ -61,7 +81,7 @@ class SentenceChunker(Chunker):
+ 
+     sentence_pattern = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(])")
+ 
+-    def chunk(self, text: str) -> list[str]:
++    def chunk_with_offsets(self, text: str) -> list[ChunkSpan]:
+         sentences = [
+             part.strip()
+             for part in self.sentence_pattern.split(text.strip())
+@@ -70,54 +90,71 @@ class SentenceChunker(Chunker):
+         if not sentences:
+             return []
+ 
+-        chunks: list[str] = []
++        spans: list[ChunkSpan] = []
+         current: list[str] = []
+         current_words = 0
++        chunk_start = 0
++        cursor = 0
+         for sentence in sentences:
+             sentence_words = len(sentence.split())
+             if current and current_words + sentence_words > self.config.chunk_size:
+-                chunks.append(" ".join(current))
++                spans.append(ChunkSpan(" ".join(current), chunk_start, cursor))
+                 current = []
+                 current_words = 0
++                chunk_start = cursor
+             current.append(sentence)
+             current_words += sentence_words
++            cursor += sentence_words
+         if current:
+-            chunks.append(" ".join(current))
+-        return chunks
++            spans.append(ChunkSpan(" ".join(current), chunk_start, cursor))
++        return spans
+ 
+ 
+ class ParagraphChunker(Chunker):
+     """Keep paragraphs intact, falling back to fixed windows for oversized paragraphs."""
+ 
+-    def chunk(self, text: str) -> list[str]:
++    def chunk_with_offsets(self, text: str) -> list[ChunkSpan]:
+         paragraphs = [
+             part.strip() for part in re.split(r"\n\s*\n+", text.strip()) if part.strip()
+         ]
+         if not paragraphs:
+             return []
+ 
+-        chunks: list[str] = []
++        spans: list[ChunkSpan] = []
+         fallback = FixedSizeChunker(self.config)
+         current: list[str] = []
+         current_words = 0
++        chunk_start = 0
++        cursor = 0
+         for paragraph in paragraphs:
+             paragraph_words = len(paragraph.split())
+             if paragraph_words > self.config.chunk_size:
+                 if current:
+-                    chunks.append("\n\n".join(current))
++                    spans.append(ChunkSpan("\n\n".join(current), chunk_start, cursor))
+                     current = []
+                     current_words = 0
+-                chunks.extend(fallback.chunk(paragraph))
++                for sub_span in fallback.chunk_with_offsets(paragraph):
++                    spans.append(
++                        ChunkSpan(
++                            sub_span.text,
++                            cursor + sub_span.start,
++                            cursor + sub_span.end,
++                        )
++                    )
++                cursor += paragraph_words
++                chunk_start = cursor
+                 continue
+             if current and current_words + paragraph_words > self.config.chunk_size:
+-                chunks.append("\n\n".join(current))
++                spans.append(ChunkSpan("\n\n".join(current), chunk_start, cursor))
+                 current = []
+                 current_words = 0
++                chunk_start = cursor
+             current.append(paragraph)
+             current_words += paragraph_words
++            cursor += paragraph_words
+         if current:
+-            chunks.append("\n\n".join(current))
+-        return chunks
++            spans.append(ChunkSpan("\n\n".join(current), chunk_start, cursor))
++        return spans
+ 
+ 
+ class RecursiveChunker(Chunker):
+@@ -125,60 +162,84 @@ class RecursiveChunker(Chunker):
+ 
+     separators = ("\n\n", "\n", ". ", " ")
+ 
+-    def chunk(self, text: str) -> list[str]:
+-        if not text.strip():
++    def chunk_with_offsets(self, text: str) -> list[ChunkSpan]:
++        stripped = text.strip()
++        if not stripped:
+             return []
+-        chunks = self._split(text.strip(), 0)
++        spans = self._split(stripped, 0, 0)
+         if self.config.chunk_overlap == 0:
+-            return chunks
+-
+-        overlapped: list[str] = []
+-        for index, chunk in enumerate(chunks):
+-            if index > 0:
+-                previous_words = chunks[index - 1].split()
+-                overlap = previous_words[-self.config.chunk_overlap :]
+-                chunk = " ".join(overlap + chunk.split())
+-            overlapped.append(chunk)
++            return spans
++
++        overlapped: list[ChunkSpan] = []
++        for index, span in enumerate(spans):
++            if index == 0:
++                overlapped.append(span)
++                continue
++            previous = spans[index - 1]
++            previous_words = previous.text.split()
++            overlap_count = min(self.config.chunk_overlap, len(previous_words))
++            overlap_words = previous_words[len(previous_words) - overlap_count :]
++            new_text = " ".join(overlap_words + span.text.split())
++            # The overlap words are real words taken from just before this
++            # span, so the true start is exactly overlap_count words earlier
++            # -- no guessing, no re-searching the document for a match.
++            overlapped.append(
++                ChunkSpan(new_text, span.start - overlap_count, span.end)
++            )
+         return overlapped
+ 
+-    def _split(self, text: str, separator_index: int) -> list[str]:
+-        if len(text.split()) <= self.config.chunk_size:
+-            return [text]
++    def _split(self, text: str, separator_index: int, offset: int) -> list[ChunkSpan]:
++        words = text.split()
++        if len(words) <= self.config.chunk_size:
++            return [ChunkSpan(text, offset, offset + len(words))]
+         if separator_index >= len(self.separators):
+-            return FixedSizeChunker(
++            fallback = FixedSizeChunker(
+                 ChunkingConfig(
+                     chunk_size=self.config.chunk_size,
+                     chunk_overlap=0,
+                     semantic_threshold=self.config.semantic_threshold,
+                 )
+-            ).chunk(text)
++            )
++            return [
++                ChunkSpan(span.text, offset + span.start, offset + span.end)
++                for span in fallback.chunk_with_offsets(text)
++            ]
+ 
+         separator = self.separators[separator_index]
+         parts = [part.strip() for part in text.split(separator) if part.strip()]
+         if len(parts) <= 1:
+-            return self._split(text, separator_index + 1)
++            return self._split(text, separator_index + 1, offset)
+ 
+-        chunks: list[str] = []
++        spans: list[ChunkSpan] = []
+         current: list[str] = []
+         current_words = 0
++        chunk_start = offset
++        cursor = offset
+         for part in parts:
+             part_words = len(part.split())
+             if part_words > self.config.chunk_size:
+                 if current:
+-                    chunks.append(separator.join(current))
++                    spans.append(
++                        ChunkSpan(separator.join(current), chunk_start, cursor)
++                    )
+                     current = []
+                     current_words = 0
+-                chunks.extend(self._split(part, separator_index + 1))
++                spans.extend(self._split(part, separator_index + 1, cursor))
++                cursor += part_words
++                chunk_start = cursor
+             elif current and current_words + part_words > self.config.chunk_size:
+-                chunks.append(separator.join(current))
++                spans.append(ChunkSpan(separator.join(current), chunk_start, cursor))
+                 current = [part]
+                 current_words = part_words
++                chunk_start = cursor
++                cursor += part_words
+             else:
+                 current.append(part)
+                 current_words += part_words
++                cursor += part_words
+         if current:
+-            chunks.append(separator.join(current))
+-        return chunks
++            spans.append(ChunkSpan(separator.join(current), chunk_start, cursor))
++        return spans
+ 
+ 
+ class SemanticChunker(Chunker):
+@@ -194,7 +255,7 @@ class SemanticChunker(Chunker):
+             raise ValueError("semantic chunking requires an embedding provider")
+         self.embedding_provider = embedding_provider
+ 
+-    def chunk(self, text: str) -> list[str]:
++    def chunk_with_offsets(self, text: str) -> list[ChunkSpan]:
+         sentences = [
+             part.strip()
+             for part in self.sentence_pattern.split(text.strip())
+@@ -203,12 +264,15 @@ class SemanticChunker(Chunker):
+         if not sentences:
+             return []
+         if len(sentences) == 1:
+-            return sentences
++            word_count = len(sentences[0].split())
++            return [ChunkSpan(sentences[0], 0, word_count)]
+ 
+         vectors = self.embedding_provider.embed_documents(sentences)
+-        chunks: list[str] = []
++        spans: list[ChunkSpan] = []
+         current = [sentences[0]]
+         current_words = len(sentences[0].split())
++        chunk_start = 0
++        cursor = current_words
+         for index in range(1, len(sentences)):
+             similarity = _cosine_similarity(vectors[index - 1], vectors[index])
+             sentence = sentences[index]
+@@ -216,15 +280,17 @@ class SemanticChunker(Chunker):
+             boundary = similarity < self.config.semantic_threshold
+             too_large = current_words + sentence_words > self.config.chunk_size
+             if boundary or too_large:
+-                chunks.append(" ".join(current))
++                spans.append(ChunkSpan(" ".join(current), chunk_start, cursor))
+                 current = [sentence]
+                 current_words = sentence_words
++                chunk_start = cursor
+             else:
+                 current.append(sentence)
+                 current_words += sentence_words
++            cursor += sentence_words
+         if current:
+-            chunks.append(" ".join(current))
+-        return chunks
++            spans.append(ChunkSpan(" ".join(current), chunk_start, cursor))
++        return spans
+ 
+ 
+ def _cosine_similarity(first: list[float], second: list[float]) -> float:
+diff --git a/rag-learning-lab/backend/app/ingestion/chunker.py b/rag-learning-lab/backend/app/ingestion/chunker.py
+index 1ea950a..ba4382c 100644
+--- a/rag-learning-lab/backend/app/ingestion/chunker.py
++++ b/rag-learning-lab/backend/app/ingestion/chunker.py
+@@ -35,24 +35,20 @@ def chunk_document_pages(
+         return []
+ 
+     document_text = "\n\n".join(page["text"].strip() for page in non_empty_pages)
+-    document_words: list[str] = []
++
++    # word_pages[i] tells us which page word i of document_text belongs to.
++    # Built once, up front, from ground truth -- not reconstructed later.
+     word_pages: list[int] = []
+     for page in non_empty_pages:
+         page_words = page["text"].split()
+-        document_words.extend(page_words)
+         word_pages.extend([page.get("page_number")] * len(page_words))
+ 
+-    split_chunks = chunker.chunk(document_text)
++    spans = chunker.chunk_with_offsets(document_text)
+     chunks: list[dict] = []
+-    search_start = 0
+-    overlap_words = chunk_overlap if strategy.lower() in {"fixed", "recursive"} else 0
+ 
+-    for chunk_index, chunk_text in enumerate(split_chunks):
+-        chunk_words = chunk_text.split()
+-        start = _find_chunk_start(document_words, chunk_words, search_start)
+-        if start is None:
+-            start = _find_chunk_start(document_words, chunk_words, 0) or 0
+-        end = min(start + len(chunk_words), len(word_pages))
++    for chunk_index, span in enumerate(spans):
++        start = max(span.start, 0)
++        end = min(span.end, len(word_pages))
+         page_ids = list(dict.fromkeys(word_pages[start:end]))
+         source_page = non_empty_pages[0]
+         if page_ids:
+@@ -71,24 +67,11 @@ def chunk_document_pages(
+                 else source_page.get("page_number"),
+                 "page_ids": page_ids,
+                 "chunk_id": f"chunk_{chunk_index + 1:03d}",
+-                "chunk_text": chunk_text,
++                "chunk_text": span.text,
+                 "chunking_strategy": strategy,
+                 "chunk_size": chunk_size,
+                 "chunk_index": chunk_index,
+             }
+         )
+-        search_start = max(start + len(chunk_words) - overlap_words, start + 1)
+ 
+     return chunks
+-
+-
+-def _find_chunk_start(
+-    document_words: list[str], chunk_words: list[str], search_start: int
+-) -> int | None:
+-    if not chunk_words:
+-        return search_start
+-    last_start = len(document_words) - len(chunk_words)
+-    for start in range(search_start, last_start + 1):
+-        if document_words[start : start + len(chunk_words)] == chunk_words:
+-            return start
+-    return None
+diff --git a/rag-learning-lab/backend/tests/test_duplicate_boilerplate_regression.py b/rag-learning-lab/backend/tests/test_duplicate_boilerplate_regression.py
+new file mode 100644
+index 0000000..222ea21
+--- /dev/null
++++ b/rag-learning-lab/backend/tests/test_duplicate_boilerplate_regression.py
+@@ -0,0 +1,66 @@
++"""Regression test for the page-misattribution bug in commit 707a76f.
++
++The old chunk_document_pages() re-found each chunk's page by searching for
++its exact word sequence in the flattened document. That search returns the
++*first* match at or after a cursor, so when the same phrase (running
++headers, footers, disclaimers, repeated titles) appears on more than one
++page, a chunk can silently get attributed to the wrong page with no error.
++
++These cases fix that by having each chunker report the exact word-index
++span it covers while it builds the chunk, so page attribution is a direct
++index lookup instead of a re-search.
++"""
++
++from app.ingestion.chunker import chunk_document_pages
++
++
++def _pages(*texts: str) -> list[dict]:
++    return [
++        {
++            "page_number": index + 1,
++            "document_id": "doc-1",
++            "filename": "doc.pdf",
++            "text": text,
++        }
++        for index, text in enumerate(texts)
++    ]
++
++
++def test_sentence_chunks_are_correctly_paged_despite_repeated_header():
++    pages = _pages(
++        "Confidential Internal Report. Section Overview. The revenue grew by 12 percent this quarter.",
++        "Confidential Internal Report. Section Details. The revenue grew by 12 percent this quarter due to APAC sales.",
++        "Confidential Internal Report. Section Risks. Currency fluctuations pose a risk for next year outlook.",
++    )
++
++    chunks = chunk_document_pages(pages, chunk_size=12, chunk_overlap=0, strategy="sentence")
++
++    by_text = {chunk["chunk_text"]: chunk["page_ids"] for chunk in chunks}
++    assert by_text["Section Details."] == [2]
++    assert by_text["Confidential Internal Report. Section Risks."] == [3]
++    assert (
++        by_text["The revenue grew by 12 percent this quarter due to APAC sales."]
++        == [2]
++    )
++
++
++def test_recursive_overlap_stays_on_correct_page_with_repeated_sentence():
++    pages = _pages(
++        "Standard boilerplate notice text here. Alpha unique content for page one only.",
++        "Standard boilerplate notice text here. Beta unique content for page two only extended further words.",
++        "Standard boilerplate notice text here. Gamma unique content for page three only.",
++    )
++
++    chunks = chunk_document_pages(
++        pages, chunk_size=6, chunk_overlap=3, strategy="recursive"
++    )
++
++    page_two_chunks = [c for c in chunks if "Beta" in c["chunk_text"]]
++    assert page_two_chunks
++    for chunk in page_two_chunks:
++        assert 2 in chunk["page_ids"]
++
++    page_three_chunks = [c for c in chunks if "Gamma" in c["chunk_text"]]
++    assert page_three_chunks
++    for chunk in page_three_chunks:
++        assert 3 in chunk["page_ids"]

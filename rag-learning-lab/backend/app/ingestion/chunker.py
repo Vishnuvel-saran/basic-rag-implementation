@@ -35,24 +35,20 @@ def chunk_document_pages(
         return []
 
     document_text = "\n\n".join(page["text"].strip() for page in non_empty_pages)
-    document_words: list[str] = []
+
+    # word_pages[i] tells us which page word i of document_text belongs to.
+    # Built once, up front, from ground truth -- not reconstructed later.
     word_pages: list[int] = []
     for page in non_empty_pages:
         page_words = page["text"].split()
-        document_words.extend(page_words)
         word_pages.extend([page.get("page_number")] * len(page_words))
 
-    split_chunks = chunker.chunk(document_text)
+    spans = chunker.chunk_with_offsets(document_text)
     chunks: list[dict] = []
-    search_start = 0
-    overlap_words = chunk_overlap if strategy.lower() in {"fixed", "recursive"} else 0
 
-    for chunk_index, chunk_text in enumerate(split_chunks):
-        chunk_words = chunk_text.split()
-        start = _find_chunk_start(document_words, chunk_words, search_start)
-        if start is None:
-            start = _find_chunk_start(document_words, chunk_words, 0) or 0
-        end = min(start + len(chunk_words), len(word_pages))
+    for chunk_index, span in enumerate(spans):
+        start = max(span.start, 0)
+        end = min(span.end, len(word_pages))
         page_ids = list(dict.fromkeys(word_pages[start:end]))
         source_page = non_empty_pages[0]
         if page_ids:
@@ -71,24 +67,11 @@ def chunk_document_pages(
                 else source_page.get("page_number"),
                 "page_ids": page_ids,
                 "chunk_id": f"chunk_{chunk_index + 1:03d}",
-                "chunk_text": chunk_text,
+                "chunk_text": span.text,
                 "chunking_strategy": strategy,
                 "chunk_size": chunk_size,
                 "chunk_index": chunk_index,
             }
         )
-        search_start = max(start + len(chunk_words) - overlap_words, start + 1)
 
     return chunks
-
-
-def _find_chunk_start(
-    document_words: list[str], chunk_words: list[str], search_start: int
-) -> int | None:
-    if not chunk_words:
-        return search_start
-    last_start = len(document_words) - len(chunk_words)
-    for start in range(search_start, last_start + 1):
-        if document_words[start : start + len(chunk_words)] == chunk_words:
-            return start
-    return None
