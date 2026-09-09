@@ -94,6 +94,7 @@ async def upload_document(
             strategy=chunking_strategy,
             semantic_threshold=effective_semantic_threshold,
             embedding_provider=app.state.embedding_provider,
+            llm_provider=app.state.llm_provider,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

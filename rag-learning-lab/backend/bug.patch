@@ -1,0 +1,166 @@
+diff --git a/rag-learning-lab/backend/app/rag/prompt_builder.py b/rag-learning-lab/backend/app/rag/prompt_builder.py
+index 47683fd..4890b3d 100644
+--- a/rag-learning-lab/backend/app/rag/prompt_builder.py
++++ b/rag-learning-lab/backend/app/rag/prompt_builder.py
+@@ -33,6 +33,15 @@ Do not invent facts.
+ If the answer is not present in the context, say clearly that the information is not available in the supplied material.
+ When possible, mention the source document and page numbers.
+ 
++The context may contain several rules or clauses that look similar but apply to
++different categories, conditions, or entities. Before answering:
++1. Quote the specific sentence(s) from the context that apply to this question.
++   If more than one clause looks relevant, quote each one and note which
++   category or condition it covers.
++2. Work through any calculation or condition-matching explicitly, one step
++   at a time, using only the quoted text.
++3. Then give the final answer, stated plainly.
++
+ Question:
+ {question}
+ 
+diff --git a/rag-learning-lab/backend/scripts/eval_rag.py b/rag-learning-lab/backend/scripts/eval_rag.py
+new file mode 100644
+index 0000000..bed3544
+--- /dev/null
++++ b/rag-learning-lab/backend/scripts/eval_rag.py
+@@ -0,0 +1,123 @@
++"""Batch-evaluate the RAG API against a set of questions.
++
++This does NOT hardcode any one question or expected answer -- it's a generic
++harness so you can build up your own eval set for samp2.pdf (or any doc you
++know end-to-end) and see, for every question:
++  - which chunk(s) were retrieved (id, page_ids, similarity score)
++  - the final answer
++  - optionally, repeat the same question N times to check consistency
++    across LLM sampling noise vs. genuinely different retrieval
++
++Usage:
++    # 1. Make sure the API is running:
++    #    uvicorn app.main:app --reload  (from rag-learning-lab/backend)
++
++    # 2. (Re)ingest the PDF with the strategy/size you want to evaluate:
++    python scripts/eval_rag.py --ingest samp2.pdf --strategy recursive --chunk-size 800 --chunk-overlap 100
++
++    # 3. Run a batch of questions, either inline or from a file:
++    python scripts/eval_rag.py --questions questions.json --repeat 3
++
++Where questions.json is a plain JSON list of strings, e.g.:
++    [
++      "What salary range counts as a Dream company?",
++      "How many days does a student have to choose between two Day 1 offers?",
++      "What happens if a student doesn't maintain 80% training attendance?"
++    ]
++"""
++
++from __future__ import annotations
++
++import argparse
++import json
++import sys
++from pathlib import Path
++
++import requests
++
++
++def ingest(base_url: str, pdf_path: str, strategy: str, chunk_size: int, chunk_overlap: int) -> None:
++    with open(pdf_path, "rb") as fh:
++        response = requests.post(
++            f"{base_url}/documents/upload",
++            params={
++                "chunking_strategy": strategy,
++                "chunk_size": chunk_size,
++                "chunk_overlap": chunk_overlap,
++            },
++            files={"file": (Path(pdf_path).name, fh, "application/pdf")},
++            timeout=120,
++        )
++    response.raise_for_status()
++    body = response.json()
++    print(
++        f"Ingested {body['filename']}: {body['page_count']} pages -> "
++        f"{body['chunk_count']} chunks (strategy={strategy}, "
++        f"chunk_size={chunk_size}, chunk_overlap={chunk_overlap})"
++    )
++
++
++def ask(base_url: str, question: str, top_k: int | None) -> dict:
++    payload: dict = {"question": question}
++    if top_k is not None:
++        payload["top_k"] = top_k
++    response = requests.post(f"{base_url}/query", json=payload, timeout=120)
++    response.raise_for_status()
++    return response.json()
++
++
++def run_eval(base_url: str, questions: list[str], repeat: int, top_k: int | None) -> None:
++    for question in questions:
++        print("=" * 100)
++        print("Q:", question)
++        answers_seen: list[str] = []
++        for attempt in range(1, repeat + 1):
++            result = ask(base_url, question, top_k)
++            chunks = result.get("retrieved_chunks", [])
++            chunk_summary = [
++                {
++                    "chunk_id": c.get("chunk_id"),
++                    "pages": c.get("metadata", {}).get("page_ids"),
++                    "similarity": c.get("similarity_score"),
++                }
++                for c in chunks
++            ]
++            print(f"  [attempt {attempt}] retrieved: {chunk_summary}")
++            print(f"  [attempt {attempt}] answer: {result['answer'].strip()[:400]}")
++            answers_seen.append(result["answer"].strip())
++        if repeat > 1:
++            unique = len(set(answers_seen))
++            flag = "STABLE" if unique == 1 else f"INCONSISTENT ({unique} distinct answers)"
++            print(f"  -> {flag} across {repeat} attempts")
++        print()
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument("--base-url", default="http://localhost:8000")
++    parser.add_argument("--ingest", help="Path to a PDF to (re)ingest before running the eval")
++    parser.add_argument("--strategy", default="recursive", choices=["fixed", "sentence", "paragraph", "recursive", "semantic"])
++    parser.add_argument("--chunk-size", type=int, default=800)
++    parser.add_argument("--chunk-overlap", type=int, default=100)
++    parser.add_argument("--questions", help="Path to a JSON file containing a list of question strings")
++    parser.add_argument("--question", action="append", default=[], help="Add a single question inline; can be repeated")
++    parser.add_argument("--repeat", type=int, default=1, help="Run each question this many times to check consistency")
++    parser.add_argument("--top-k", type=int, default=None)
++    args = parser.parse_args()
++
++    if args.ingest:
++        ingest(args.base_url, args.ingest, args.strategy, args.chunk_size, args.chunk_overlap)
++
++    questions: list[str] = list(args.question)
++    if args.questions:
++        questions.extend(json.loads(Path(args.questions).read_text()))
++
++    if not questions:
++        print("No questions given. Use --question \"...\" (repeatable) or --questions file.json", file=sys.stderr)
++        sys.exit(1)
++
++    run_eval(args.base_url, questions, args.repeat, args.top_k)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/rag-learning-lab/backend/scripts/sample_questions.json b/rag-learning-lab/backend/scripts/sample_questions.json
+new file mode 100644
+index 0000000..a234b4d
+--- /dev/null
++++ b/rag-learning-lab/backend/scripts/sample_questions.json
+@@ -0,0 +1,12 @@
++[
++  "What salary range qualifies a company as 'Dream' category?",
++  "Are core companies always evaluated purely by salary package?",
++  "What happens if a student provides false data during placement registration?",
++  "Can a student decline an offer after being selected?",
++  "If a student receives offers from two different Day 1 companies, how long do they have to choose one?",
++  "What happens if a student doesn't maintain at least 80% attendance across placement training programs?",
++  "Are internship offers treated differently from full-time offers?",
++  "Does a student need pre-approval to skip a placement process after applying?",
++  "Who does correspondence with a recruiter need to be routed through, and until when?",
++  "What happens if a student who received a Marquee offer tries to sit for another company's process?"

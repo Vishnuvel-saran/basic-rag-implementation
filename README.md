@@ -37,6 +37,9 @@ The frontend lets you choose the chunker before processing a PDF:
 - `paragraph`: keeps paragraph boundaries and falls back to fixed windows for oversized paragraphs
 - `recursive`: tries paragraph, line, sentence, and word boundaries in that order
 - `semantic`: embeds adjacent sentences and starts a new chunk when their cosine similarity crosses the configured threshold
+- `agentic`: sends bounded sentence windows to the LLM and asks it to choose valid sentence boundaries; the LLM never rewrites source text
+
+Agentic chunking is more expensive and slower than deterministic strategies because it performs LLM calls during ingestion. It is bounded by sentence windows and falls back to recursive chunking when the provider fails or returns invalid boundaries. The resulting chunk text still comes from exact source word spans.
 
 The ingestion boundary is deliberately strategy-based:
 

@@ -5,6 +5,7 @@ from typing import List
 from app.embeddings.base import EmbeddingProvider
 from app.ingestion.chunker_factory import ChunkerFactory
 from app.ingestion.chunkers import ChunkingConfig
+from app.llm.base import LLMProvider
 
 
 def split_text_into_chunks(text: str, chunk_size: int, chunk_overlap: int) -> List[str]:
@@ -20,6 +21,7 @@ def chunk_document_pages(
     strategy: str = "fixed",
     semantic_threshold: float = 0.75,
     embedding_provider: EmbeddingProvider | None = None,
+    llm_provider: LLMProvider | None = None,
 ) -> list[dict]:
     chunker = ChunkerFactory.create(
         strategy,
@@ -29,6 +31,7 @@ def chunk_document_pages(
             semantic_threshold=semantic_threshold,
         ),
         embedding_provider=embedding_provider,
+        llm_provider=llm_provider,
     )
     non_empty_pages = [page for page in pages if page.get("text", "").strip()]
     if not non_empty_pages:

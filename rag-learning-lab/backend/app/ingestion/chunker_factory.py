@@ -5,6 +5,7 @@ from app.ingestion.chunkers import (
     Chunker,
     ChunkingConfig,
     FixedSizeChunker,
+    AgenticChunker,
     ParagraphChunker,
     RecursiveChunker,
     SemanticChunker,
@@ -20,6 +21,7 @@ class ChunkerFactory:
         strategy: str,
         config: ChunkingConfig,
         embedding_provider: EmbeddingProvider | None = None,
+        llm_provider=None,
     ) -> Chunker:
         normalized = strategy.strip().lower().replace("_", "-")
         chunkers = {
@@ -45,6 +47,9 @@ class ChunkerFactory:
         if normalized in {"semantic", "semantic-based"}:
             config.validate(uses_overlap=False)
             return SemanticChunker(config, embedding_provider)
+        if normalized == "agentic":
+            config.validate(uses_overlap=True)
+            return AgenticChunker(config, llm_provider)
         raise ValueError(
-            "Unsupported chunking strategy. Choose fixed, sentence, paragraph, recursive, or semantic."
+            "Unsupported chunking strategy. Choose fixed, sentence, paragraph, recursive, semantic, or agentic."
         )

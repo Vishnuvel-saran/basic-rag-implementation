@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import re
+import json
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from app.embeddings.base import EmbeddingProvider
+    from app.llm.base import LLMProvider
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -183,9 +189,7 @@ class RecursiveChunker(Chunker):
             # The overlap words are real words taken from just before this
             # span, so the true start is exactly overlap_count words earlier
             # -- no guessing, no re-searching the document for a match.
-            overlapped.append(
-                ChunkSpan(new_text, span.start - overlap_count, span.end)
-            )
+            overlapped.append(ChunkSpan(new_text, span.start - overlap_count, span.end))
         return overlapped
 
     def _split(self, text: str, separator_index: int, offset: int) -> list[ChunkSpan]:
@@ -291,6 +295,134 @@ class SemanticChunker(Chunker):
         if current:
             spans.append(ChunkSpan(" ".join(current), chunk_start, cursor))
         return spans
+
+
+class AgenticChunker(Chunker):
+    """Use an LLM to choose boundaries among deterministic sentence boundaries.
+
+    The model never writes chunk text. It only returns sentence positions that
+    should start a new chunk, so every returned span remains an exact word range
+    from the original input.
+    """
+
+    sentence_pattern = SentenceChunker.sentence_pattern
+    max_window_sentences = 24
+
+    def __init__(self, config: ChunkingConfig, llm_provider: LLMProvider | None):
+        super().__init__(config)
+        if llm_provider is None:
+            raise ValueError("agentic chunking requires an LLM provider")
+        self.llm_provider = llm_provider
+
+    def chunk_with_offsets(self, text: str) -> list[ChunkSpan]:
+        words = text.split()
+        if not words:
+            return []
+
+        sentence_ranges = self._sentence_ranges(text)
+        if not sentence_ranges:
+            return []
+
+        spans: list[ChunkSpan] = []
+        for window_start in range(0, len(sentence_ranges), self.max_window_sentences):
+            window_end = min(
+                window_start + self.max_window_sentences, len(sentence_ranges)
+            )
+            window_ranges = sentence_ranges[window_start:window_end]
+            boundaries = self._choose_boundaries(
+                [self._words_slice(words, start, end) for start, end in window_ranges]
+            )
+            if boundaries is None:
+                spans.extend(self._recursive_fallback(text, window_ranges))
+                continue
+
+            positions = [0, *boundaries, len(window_ranges)]
+            for local_start, local_end in zip(positions, positions[1:]):
+                start = window_ranges[local_start][0]
+                end = window_ranges[local_end - 1][1]
+                spans.append(
+                    ChunkSpan(self._words_slice(words, start, end), start, end)
+                )
+        return spans
+
+    def _choose_boundaries(self, sentences: list[str]) -> list[int] | None:
+        allowed = list(range(1, len(sentences)))
+        if not allowed:
+            return []
+
+        prompt = (
+            "You are choosing boundaries for document chunking.\n"
+            "Do not rewrite, summarize, or return any source text.\n"
+            'Return only valid JSON in this shape: {"boundaries":[2,5]}.\n'
+            "Each number means the sentence index where a new chunk starts. "
+            f"Only choose from these allowed indices: {allowed}.\n"
+            f"The soft target is about {self.config.chunk_size} words per chunk.\n\n"
+            + "\n".join(
+                f"Sentence {index}: {sentence}"
+                for index, sentence in enumerate(sentences)
+            )
+        )
+        try:
+            response = self.llm_provider.generate(prompt)
+            payload = self._parse_response(response)
+            boundaries = payload.get("boundaries")
+            if not isinstance(boundaries, list):
+                raise ValueError("boundaries must be a list")
+            if any(
+                not isinstance(boundary, int) or boundary not in allowed
+                for boundary in boundaries
+            ):
+                raise ValueError("response contains an invalid sentence boundary")
+            return sorted(set(boundaries))
+        except Exception as exc:
+            logger.warning("Agentic chunking fell back to recursive splitting: %s", exc)
+            return None
+
+    @staticmethod
+    def _parse_response(response: str) -> dict:
+        response = response.strip()
+        try:
+            payload = json.loads(response)
+        except json.JSONDecodeError:
+            start = response.find("{")
+            end = response.rfind("}")
+            if start < 0 or end <= start:
+                raise ValueError("LLM response was not JSON")
+            payload = json.loads(response[start : end + 1])
+        if not isinstance(payload, dict):
+            raise ValueError("LLM response must be a JSON object")
+        return payload
+
+    def _recursive_fallback(
+        self, text: str, sentence_ranges: list[tuple[int, int]]
+    ) -> list[ChunkSpan]:
+        words = text.split()
+        start = sentence_ranges[0][0]
+        end = sentence_ranges[-1][1]
+        window_text = self._words_slice(words, start, end)
+        fallback = RecursiveChunker(self.config).chunk_with_offsets(window_text)
+        return [
+            ChunkSpan(span.text, start + span.start, start + span.end)
+            for span in fallback
+        ]
+
+    def _sentence_ranges(self, text: str) -> list[tuple[int, int]]:
+        sentences = [
+            part.strip()
+            for part in self.sentence_pattern.split(text.strip())
+            if part.strip()
+        ]
+        ranges: list[tuple[int, int]] = []
+        cursor = 0
+        for sentence in sentences:
+            end = cursor + len(sentence.split())
+            ranges.append((cursor, end))
+            cursor = end
+        return ranges
+
+    @staticmethod
+    def _words_slice(words: list[str], start: int, end: int) -> str:
+        return " ".join(words[start:end])
 
 
 def _cosine_similarity(first: list[float], second: list[float]) -> float:

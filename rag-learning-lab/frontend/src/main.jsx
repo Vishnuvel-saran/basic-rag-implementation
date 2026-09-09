@@ -60,6 +60,9 @@ function App() {
       if (["fixed", "paragraph", "recursive"].includes(chunkingStrategy)) {
         params.set("chunk_overlap", String(chunkOverlap));
       }
+      if (chunkingStrategy === "agentic") {
+        params.set("chunk_overlap", String(chunkOverlap));
+      }
       if (chunkingStrategy === "semantic") {
         params.set("semantic_threshold", String(semanticThreshold));
       }
@@ -131,9 +134,9 @@ function App() {
           {file && <div className="file-chip"><FileText size={15} /><span>{file.name}</span><button onClick={() => setFile(null)} aria-label="Remove file"><X size={14} /></button></div>}
           <div className="control-block">
             <div className="control-heading"><span>Chunking controls</span><CircleHelp size={14} /></div>
-            <label className="strategy-control"><span>Chunking strategy</span><select value={chunkingStrategy} onChange={(event) => setChunkingStrategy(event.target.value)}><option value="fixed">Fixed-size</option><option value="sentence">Sentence-based</option><option value="paragraph">Paragraph-based</option><option value="recursive">Recursive</option><option value="semantic">Semantic</option></select></label>
+            <label className="strategy-control"><span>Chunking strategy</span><select value={chunkingStrategy} onChange={(event) => setChunkingStrategy(event.target.value)}><option value="fixed">Fixed-size</option><option value="sentence">Sentence-based</option><option value="paragraph">Paragraph-based</option><option value="recursive">Recursive</option><option value="semantic">Semantic</option><option value="agentic">Agentic (LLM-guided)</option></select></label>
             <NumberControl label="Chunk size" value={chunkSize} onChange={setChunkSize} suffix="words" />
-            {(chunkingStrategy === "fixed" || chunkingStrategy === "recursive") && <NumberControl label="Overlap" value={chunkOverlap} onChange={setChunkOverlap} suffix="words" />}
+            {(["fixed", "recursive", "agentic"].includes(chunkingStrategy)) && <NumberControl label="Overlap" value={chunkOverlap} onChange={setChunkOverlap} suffix="words" />}
             {chunkingStrategy === "semantic" && <NumberControl label="Threshold" value={semanticThreshold} onChange={setSemanticThreshold} suffix="0–1" step="0.05" min="0" max="1" />}
             <button className="button primary full" disabled={!file || busy} onClick={processDocument}>{busy && stage === "Embedding" ? <LoaderCircle className="spin" size={15} /> : <ArrowDown size={15} />} {busy && stage === "Embedding" ? "Processing..." : "Process document"}</button>
           </div>
