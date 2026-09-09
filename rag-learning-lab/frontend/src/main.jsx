@@ -8,7 +8,7 @@ const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 const initialStages = ["Question", "Embedding", "Retrieval", "Top-K chunks", "Prompt", "LLM", "Answer"];
 
 function App() {
-  const [file, setFile] = useState(null);
+  const [uploadQueue, setUploadQueue] = useState([]);
   const [chunks, setChunks] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [documentCap, setDocumentCap] = useState(4);
@@ -29,9 +29,9 @@ function App() {
   const [stage, setStage] = useState("");
   const [error, setError] = useState("");
   const fileInputRef = useRef(null);
-  const selectedDocument = file ? documents.find((document) => document.filename === file.name) : null;
   const atDocumentCap = documents.length >= documentCap;
-  const canProcess = file && (!atDocumentCap || Boolean(selectedDocument));
+  const pendingFiles = uploadQueue.filter((entry) => entry.status === "pending");
+  const canProcess = pendingFiles.length > 0 && !busy;
 
   const loadDocuments = async () => {
     const response = await fetch(`${API_URL}/documents`);
@@ -51,50 +51,47 @@ function App() {
     return chunks.filter((chunk) => `${chunk.chunk_id} ${chunk.context} ${chunk.metadata?.page_number || ""}`.toLowerCase().includes(query));
   }, [chunks, chunkSearch]);
 
-  const chooseFile = (selectedFile) => {
-    if (!selectedFile) return;
-    if (selectedFile.type !== "application/pdf" && !selectedFile.name.toLowerCase().endsWith(".pdf")) {
-      setError("Please choose a PDF file.");
-      return;
+  const chooseFiles = (selectedFiles) => {
+    const entries = Array.from(selectedFiles || []).map((selectedFile) => {
+      const isPdf = selectedFile.type === "application/pdf" || selectedFile.name.toLowerCase().endsWith(".pdf");
+      return {
+        file: selectedFile,
+        status: isPdf ? "pending" : "error",
+        error: isPdf ? undefined : "Only PDF files are supported.",
+      };
+    });
+    if (entries.length) {
+      setUploadQueue((current) => [...current, ...entries]);
+      setError("");
     }
-    setFile(selectedFile);
-    setError("");
   };
 
   const processDocument = async () => {
-    if (!file) return;
+    if (!pendingFiles.length) return;
     setBusy(true);
     setError("");
-    setStage("Embedding");
-    try {
-      const body = new FormData();
-      body.append("file", file);
-      const params = new URLSearchParams({
-        chunking_strategy: chunkingStrategy,
-        chunk_size: String(chunkSize),
-      });
-      if (["fixed", "paragraph", "recursive"].includes(chunkingStrategy)) {
-        params.set("chunk_overlap", String(chunkOverlap));
+    for (const entry of pendingFiles) {
+      setUploadQueue((current) => current.map((item) => item === entry ? { ...item, status: "uploading", error: undefined } : item));
+      setStage("Embedding");
+      try {
+        const body = new FormData();
+        body.append("file", entry.file);
+        const params = new URLSearchParams({ chunking_strategy: chunkingStrategy, chunk_size: String(chunkSize) });
+        if (["fixed", "paragraph", "recursive", "agentic"].includes(chunkingStrategy)) params.set("chunk_overlap", String(chunkOverlap));
+        if (chunkingStrategy === "semantic") params.set("semantic_threshold", String(semanticThreshold));
+        const response = await fetch(`${API_URL}/documents/upload?${params}`, { method: "POST", body });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Document processing failed.");
+        setUploadQueue((current) => current.map((item) => item === entry ? { ...item, status: "done", error: undefined } : item));
+        setChunks(data.chunks || []);
+        setResult(null);
+        await loadDocuments();
+      } catch (err) {
+        setUploadQueue((current) => current.map((item) => item === entry ? { ...item, status: "error", error: err.message } : item));
       }
-      if (chunkingStrategy === "agentic") {
-        params.set("chunk_overlap", String(chunkOverlap));
-      }
-      if (chunkingStrategy === "semantic") {
-        params.set("semantic_threshold", String(semanticThreshold));
-      }
-      const response = await fetch(`${API_URL}/documents/upload?${params}`, { method: "POST", body });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || "Document processing failed.");
-      setChunks(data.chunks || []);
-      setResult(null);
-      await loadDocuments();
-      setStage("Answer");
-    } catch (err) {
-      setError(err.message);
-      setStage("");
-    } finally {
-      setBusy(false);
     }
+    setStage("Answer");
+    setBusy(false);
   };
 
   const removeDocument = async (documentId) => {
@@ -104,8 +101,8 @@ function App() {
       const response = await fetch(`${API_URL}/documents/${encodeURIComponent(documentId)}`, { method: "DELETE" });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Could not remove document.");
-      if (file?.name === documentId) {
-        setFile(null);
+      if (uploadQueue.some((entry) => entry.file.name === documentId)) {
+        setUploadQueue((current) => current.filter((entry) => entry.file.name !== documentId));
         setChunks([]);
       }
       await loadDocuments();
@@ -159,27 +156,27 @@ function App() {
       <section className="workspace-grid">
         <aside className="left-rail">
           <PanelLabel number="01" title="Document input" icon={<FileText size={16} />} />
-          <div className={`dropzone ${dragging ? "dragging" : ""}`} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); chooseFile(event.dataTransfer.files[0]); }}>
+          <div className={`dropzone ${dragging ? "dragging" : ""}`} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); chooseFiles(event.dataTransfer.files); }}>
             <UploadCloud size={28} strokeWidth={1.5} />
             <strong>Drag & drop PDF</strong>
             <span>or choose a file from your machine</span>
-            <button className="button ghost" onClick={() => fileInputRef.current?.click()}>Browse PDF</button>
-            <input ref={fileInputRef} type="file" accept="application/pdf,.pdf" hidden onChange={(event) => chooseFile(event.target.files[0])} />
+            <button className="button ghost" onClick={() => fileInputRef.current?.click()}>Browse PDFs</button>
+            <input ref={fileInputRef} type="file" accept="application/pdf,.pdf" multiple hidden onChange={(event) => chooseFiles(event.target.files)} />
           </div>
-          {file && <div className="file-chip"><FileText size={15} /><span>{file.name}</span><button onClick={() => setFile(null)} aria-label="Remove file"><X size={14} /></button></div>}
+          {uploadQueue.length > 0 && <div className="upload-queue">{uploadQueue.map((entry, index) => <div className={`upload-queue-row ${entry.status}`} key={`${entry.file.name}-${index}`}><FileText size={14} /><div><strong>{entry.file.name}</strong><small>{entry.status === "uploading" ? "Uploading..." : entry.status === "done" ? "Indexed" : entry.error || "Pending"}</small></div>{entry.status === "uploading" && <LoaderCircle className="spin" size={14} />}{entry.status !== "uploading" && <button onClick={() => setUploadQueue((current) => current.filter((item) => item !== entry))} aria-label={`Remove ${entry.file.name} from queue`}><X size={14} /></button>}</div>)}</div>}
           <div className="control-block">
             <div className="control-heading"><span>Chunking controls</span><CircleHelp size={14} /></div>
             <label className="strategy-control"><span>Chunking strategy</span><select value={chunkingStrategy} onChange={(event) => setChunkingStrategy(event.target.value)}><option value="fixed">Fixed-size</option><option value="sentence">Sentence-based</option><option value="paragraph">Paragraph-based</option><option value="recursive">Recursive</option><option value="semantic">Semantic</option><option value="agentic">Agentic (LLM-guided)</option></select></label>
             <NumberControl label="Chunk size" value={chunkSize} onChange={setChunkSize} suffix="words" />
             {(["fixed", "recursive", "agentic"].includes(chunkingStrategy)) && <NumberControl label="Overlap" value={chunkOverlap} onChange={setChunkOverlap} suffix="words" />}
             {chunkingStrategy === "semantic" && <NumberControl label="Threshold" value={semanticThreshold} onChange={setSemanticThreshold} suffix="0–1" step="0.05" min="0" max="1" />}
-            <button className="button primary full" disabled={!canProcess || busy} onClick={processDocument}>{busy && stage === "Embedding" ? <LoaderCircle className="spin" size={15} /> : <ArrowDown size={15} />} {busy && stage === "Embedding" ? "Processing..." : selectedDocument ? "Replace document" : "Process document"}</button>
+            <button className="button primary full" disabled={!canProcess || busy} onClick={processDocument}>{busy && stage === "Embedding" ? <LoaderCircle className="spin" size={15} /> : <ArrowDown size={15} />} {busy && stage === "Embedding" ? "Processing..." : `Process ${pendingFiles.length} file${pendingFiles.length === 1 ? "" : "s"}`}</button>
           </div>
           <div className="document-manager">
             <div className="document-manager-heading"><span>Indexed documents</span><b>{documents.length} / {documentCap}</b></div>
             {documents.length ? documents.map((document) => <div className="document-row" key={document.document_id}><FileText size={15} /><div><strong>{document.filename}</strong><small>{document.page_count} pages · {document.chunk_count} chunks</small></div><button onClick={() => removeDocument(document.document_id)} disabled={busy} aria-label={`Remove ${document.filename}`}><X size={14} /></button></div>) : <span className="document-empty">No documents indexed yet.</span>}
           </div>
-          {atDocumentCap && !selectedDocument && <div className="cap-note">Document limit reached. Choose an existing filename to replace it, or remove a document.</div>}
+          {atDocumentCap && pendingFiles.some((entry) => !documents.some((document) => document.filename === entry.file.name)) && <div className="cap-note">Document limit reached. New files will show the backend cap error; existing filenames can still be replaced.</div>}
         </aside>
 
         <section className="main-column">
