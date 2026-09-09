@@ -55,6 +55,8 @@ For a controlled experiment, keep the PDF, embedding model, Top-K, questions, LL
 
 The current vector store is in memory, so uploaded documents must be uploaded again after restarting the server. Persistent ChromaDB can be added in a later stage.
 
+The application can index up to four PDF documents at once. Questions search all indexed documents together. Uploading the same filename replaces that document's chunks; uploading a fifth different filename is rejected until one is removed. The frontend document manager shows each filename, page count, chunk count, and remove action.
+
 ## Project Structure
 
 ```text

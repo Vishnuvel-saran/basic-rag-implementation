@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Activity, ArrowDown, Check, ChevronDown, CircleHelp, FileText, Filter, Gauge, GitBranch, LoaderCircle, MessageSquare, Network, Search, Send, UploadCloud, X } from "lucide-react";
 import "./styles.css";
@@ -10,7 +10,8 @@ const initialStages = ["Question", "Embedding", "Retrieval", "Top-K chunks", "Pr
 function App() {
   const [file, setFile] = useState(null);
   const [chunks, setChunks] = useState([]);
-  const [documentInfo, setDocumentInfo] = useState(null);
+  const [documents, setDocuments] = useState([]);
+  const [documentCap, setDocumentCap] = useState(4);
   const [chunkSize, setChunkSize] = useState(400);
   const [chunkOverlap, setChunkOverlap] = useState(50);
   const [chunkingStrategy, setChunkingStrategy] = useState("fixed");
@@ -28,6 +29,21 @@ function App() {
   const [stage, setStage] = useState("");
   const [error, setError] = useState("");
   const fileInputRef = useRef(null);
+  const selectedDocument = file ? documents.find((document) => document.filename === file.name) : null;
+  const atDocumentCap = documents.length >= documentCap;
+  const canProcess = file && (!atDocumentCap || Boolean(selectedDocument));
+
+  const loadDocuments = async () => {
+    const response = await fetch(`${API_URL}/documents`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || "Could not load documents.");
+    setDocuments(data.documents || []);
+    setDocumentCap(data.max_documents ?? 4);
+  };
+
+  useEffect(() => {
+    loadDocuments().catch((err) => setError(err.message));
+  }, []);
 
   const visibleChunks = useMemo(() => {
     const query = chunkSearch.trim().toLowerCase();
@@ -70,12 +86,31 @@ function App() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Document processing failed.");
       setChunks(data.chunks || []);
-      setDocumentInfo(data);
       setResult(null);
+      await loadDocuments();
       setStage("Answer");
     } catch (err) {
       setError(err.message);
       setStage("");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeDocument = async (documentId) => {
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetch(`${API_URL}/documents/${encodeURIComponent(documentId)}`, { method: "DELETE" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Could not remove document.");
+      if (file?.name === documentId) {
+        setFile(null);
+        setChunks([]);
+      }
+      await loadDocuments();
+    } catch (err) {
+      setError(err.message);
     } finally {
       setBusy(false);
     }
@@ -138,9 +173,13 @@ function App() {
             <NumberControl label="Chunk size" value={chunkSize} onChange={setChunkSize} suffix="words" />
             {(["fixed", "recursive", "agentic"].includes(chunkingStrategy)) && <NumberControl label="Overlap" value={chunkOverlap} onChange={setChunkOverlap} suffix="words" />}
             {chunkingStrategy === "semantic" && <NumberControl label="Threshold" value={semanticThreshold} onChange={setSemanticThreshold} suffix="0–1" step="0.05" min="0" max="1" />}
-            <button className="button primary full" disabled={!file || busy} onClick={processDocument}>{busy && stage === "Embedding" ? <LoaderCircle className="spin" size={15} /> : <ArrowDown size={15} />} {busy && stage === "Embedding" ? "Processing..." : "Process document"}</button>
+            <button className="button primary full" disabled={!canProcess || busy} onClick={processDocument}>{busy && stage === "Embedding" ? <LoaderCircle className="spin" size={15} /> : <ArrowDown size={15} />} {busy && stage === "Embedding" ? "Processing..." : selectedDocument ? "Replace document" : "Process document"}</button>
           </div>
-          {documentInfo && <div className="document-stats"><span><b>{documentInfo.page_count}</b> pages</span><span><b>{documentInfo.chunk_count}</b> chunks</span></div>}
+          <div className="document-manager">
+            <div className="document-manager-heading"><span>Indexed documents</span><b>{documents.length} / {documentCap}</b></div>
+            {documents.length ? documents.map((document) => <div className="document-row" key={document.document_id}><FileText size={15} /><div><strong>{document.filename}</strong><small>{document.page_count} pages · {document.chunk_count} chunks</small></div><button onClick={() => removeDocument(document.document_id)} disabled={busy} aria-label={`Remove ${document.filename}`}><X size={14} /></button></div>) : <span className="document-empty">No documents indexed yet.</span>}
+          </div>
+          {atDocumentCap && !selectedDocument && <div className="cap-note">Document limit reached. Choose an existing filename to replace it, or remove a document.</div>}
         </aside>
 
         <section className="main-column">
@@ -158,8 +197,8 @@ function App() {
 
       <section className="chunks-section">
         <div className="section-heading"><PanelLabel number="03" title="Document chunks" icon={<FileText size={16} />} /><span className="count-pill">{visibleChunks.length} / {chunks.length}</span></div>
-        <div className="chunk-toolbar"><div className="search-field"><Search size={15} /><input value={chunkSearch} onChange={(event) => setChunkSearch(event.target.value)} placeholder="Filter chunks by text, page, or ID..." /></div><span className="muted">{documentInfo?.chunking_strategy || chunkingStrategy} · size {chunkSize}</span></div>
-        <div className="chunks-grid">{visibleChunks.length ? visibleChunks.map((chunk, index) => <ChunkCard key={`${chunk.chunk_id}-${index}`} chunk={chunk} index={index} />) : <EmptyChunks hasDocument={Boolean(documentInfo)} />}</div>
+        <div className="chunk-toolbar"><div className="search-field"><Search size={15} /><input value={chunkSearch} onChange={(event) => setChunkSearch(event.target.value)} placeholder="Filter chunks by text, page, or ID..." /></div><span className="muted">{chunks.length} chunks in latest upload · size {chunkSize}</span></div>
+        <div className="chunks-grid">{visibleChunks.length ? visibleChunks.map((chunk, index) => <ChunkCard key={`${chunk.chunk_id}-${index}`} chunk={chunk} index={index} />) : <EmptyChunks hasDocument={chunks.length > 0} />}</div>
       </section>
 
       <section className="telemetry-section">

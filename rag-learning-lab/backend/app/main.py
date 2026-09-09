@@ -39,6 +39,8 @@ app.state.rag_pipeline = RAGPipeline(
     llm_provider=app.state.llm_provider,
 )
 
+MAX_DOCUMENTS = 4
+
 
 def _public_chunk(chunk: dict[str, Any]) -> dict[str, Any]:
     """Return useful chunk context without exposing internal embedding vectors."""
@@ -51,6 +53,36 @@ def _public_chunk(chunk: dict[str, Any]) -> dict[str, Any]:
     if chunk.get("similarity_score") is not None:
         public_chunk["similarity_score"] = chunk["similarity_score"]
     return public_chunk
+
+
+def _indexed_documents() -> list[dict[str, Any]]:
+    documents: dict[str, dict[str, Any]] = {}
+    for item in app.state.vector_store._items:
+        metadata = item.get("metadata", {})
+        document_id = str(metadata.get("document_id", "unknown"))
+        document = documents.setdefault(
+            document_id,
+            {
+                "document_id": document_id,
+                "filename": metadata.get("filename", document_id),
+                "page_numbers": set(),
+                "chunk_count": 0,
+            },
+        )
+        document["chunk_count"] += 1
+        document["page_numbers"].update(metadata.get("page_ids") or [])
+        if not metadata.get("page_ids") and metadata.get("page_number") is not None:
+            document["page_numbers"].add(metadata["page_number"])
+
+    return [
+        {
+            "document_id": document["document_id"],
+            "filename": document["filename"],
+            "page_count": len(document["page_numbers"]),
+            "chunk_count": document["chunk_count"],
+        }
+        for document in documents.values()
+    ]
 
 
 @app.get("/health")
@@ -68,6 +100,18 @@ async def upload_document(
 ) -> dict[str, object]:
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
+
+    indexed_document_ids = {
+        document["document_id"] for document in _indexed_documents()
+    }
+    if (
+        file.filename not in indexed_document_ids
+        and len(indexed_document_ids) >= MAX_DOCUMENTS
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Maximum of 4 documents allowed. Remove a document before uploading another.",
+        )
 
     saved_pdf = save_uploaded_pdf(file, file.filename)
     extracted_document = extract_document_from_pdf(saved_pdf)
@@ -113,6 +157,29 @@ async def upload_document(
         "chunk_count": len(indexed_chunks),
         "chunks": [_public_chunk(chunk) for chunk in indexed_chunks],
     }
+
+
+@app.get("/documents")
+def list_documents() -> dict[str, Any]:
+    """List indexed documents derived from the in-memory vector store."""
+    documents = _indexed_documents()
+    return {
+        "documents": documents,
+        "count": len(documents),
+        "max_documents": MAX_DOCUMENTS,
+    }
+
+
+@app.delete("/documents/{document_id}")
+def delete_document(document_id: str) -> dict[str, Any]:
+    """Delete an indexed document by its URL-decoded filename identity."""
+    documents = _indexed_documents()
+    if not any(document["document_id"] == document_id for document in documents):
+        raise HTTPException(status_code=404, detail="Document is not indexed.")
+
+    app.state.vector_store.delete_by_document_id(document_id)
+    remaining = _indexed_documents()
+    return {"removed": document_id, "remaining_count": len(remaining)}
 
 
 @app.post("/query")
