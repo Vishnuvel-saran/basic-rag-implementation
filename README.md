@@ -193,3 +193,4 @@ Next:
 1. Add persistent ChromaDB storage
 2. Compare embedding models and retrieval quality
 3. Add evaluation examples for chunking and retrieval
+4. Try to implement BM25 to indroduce hybrid rag
