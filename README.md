@@ -188,7 +188,7 @@ Completed:
 7. LLM provider abstraction and OpenRouter integration
 8. End-to-end RAG pipeline and API endpoints
 
-Next:
+Next c:
 
 1. Add persistent ChromaDB storage
 2. Compare embedding models and retrieval quality
