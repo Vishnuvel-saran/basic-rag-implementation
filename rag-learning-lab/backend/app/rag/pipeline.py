@@ -4,6 +4,7 @@ from app.config.settings import settings
 from app.embeddings.base import EmbeddingProvider
 from app.llm.base import LLMProvider
 from app.rag.prompt_builder import PromptBuilder
+from app.retrieval.bm25_index import BM25Index
 from app.vectorstore.chroma_store import SimpleVectorStore
 
 
@@ -13,8 +14,8 @@ class RAGPipeline:
     The design stays deliberately simple:
     - chunk and store documents
     - embed queries and documents
-    - retrieve relevant chunks
-    - assemble a grounded prompt
+    - retrieve relevant chunks (both via cosine and BM25 for comparison)
+    - assemble a grounded prompt (using cosine results only)
     - generate an answer through a provider abstraction
     """
 
@@ -28,6 +29,7 @@ class RAGPipeline:
         self.embedding_provider = embedding_provider
         self.vector_store = vector_store
         self.llm_provider = llm_provider
+        self.bm25_index = BM25Index()
         self.top_k = top_k if top_k is not None else settings.top_k
 
     def index_chunks(self, chunks: list[dict]) -> list[dict]:
@@ -61,6 +63,9 @@ class RAGPipeline:
             )
             stored_items.append({**chunk, "metadata": metadata})
 
+        # Rebuild BM25 index from current vector store state to keep both in sync
+        self.bm25_index.build(self.vector_store._items)
+
         return stored_items
 
     def query(
@@ -68,12 +73,18 @@ class RAGPipeline:
         question: str,
         top_k: int | None = None,
         llm_options: dict | None = None,
+        include_bm25: bool = False,
     ) -> dict:
         effective_top_k = self.top_k if top_k is None else top_k
         query_vector = self.embedding_provider.embed_query(question)
         retrieved_chunks = self.vector_store.query(
             query_vector=query_vector, top_k=effective_top_k
         )
+
+        # Optional: run BM25 search in parallel with cosine search
+        retrieved_chunks_bm25 = None
+        if include_bm25:
+            retrieved_chunks_bm25 = self.bm25_index.search(question, top_k=effective_top_k)
 
         prompt = PromptBuilder.build(question, retrieved_chunks, top_k=effective_top_k)
         llm_options = {
@@ -88,7 +99,7 @@ class RAGPipeline:
             answer = self.llm_provider.generate(prompt, **llm_options)
             llm_result = {"answer": answer, "usage": None}
 
-        return {
+        result = {
             "question": question,
             "top_k": effective_top_k,
             "retrieved_chunks": retrieved_chunks,
@@ -96,3 +107,9 @@ class RAGPipeline:
             "prompt": prompt,
             "llm": llm_result,
         }
+
+        # Include BM25 results if requested
+        if include_bm25 and retrieved_chunks_bm25 is not None:
+            result["retrieved_chunks_bm25"] = retrieved_chunks_bm25
+
+        return result

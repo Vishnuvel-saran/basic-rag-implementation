@@ -52,6 +52,8 @@ def _public_chunk(chunk: dict[str, Any]) -> dict[str, Any]:
     }
     if chunk.get("similarity_score") is not None:
         public_chunk["similarity_score"] = chunk["similarity_score"]
+    if chunk.get("bm25_score") is not None:
+        public_chunk["bm25_score"] = chunk["bm25_score"]
     return public_chunk
 
 
@@ -178,6 +180,8 @@ def delete_document(document_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="Document is not indexed.")
 
     app.state.vector_store.delete_by_document_id(document_id)
+    # Rebuild BM25 index to match vector store state after deletion
+    app.state.rag_pipeline.bm25_index.build(app.state.vector_store._items)
     remaining = _indexed_documents()
     return {"removed": document_id, "remaining_count": len(remaining)}
 
@@ -186,6 +190,7 @@ def delete_document(document_id: str) -> dict[str, Any]:
 async def query_document(payload: dict[str, Any]) -> dict[str, Any]:
     question = payload.get("question")
     top_k = payload.get("top_k", settings.top_k)
+    include_bm25 = payload.get("include_bm25", False)
 
     if not isinstance(question, str) or not question.strip():
         raise HTTPException(
@@ -221,10 +226,12 @@ async def query_document(payload: dict[str, Any]) -> dict[str, Any]:
     }
     query_method = app.state.rag_pipeline.query
     if "llm_options" in signature(query_method).parameters:
-        result = query_method(question, top_k=top_k, llm_options=query_options)
+        result = query_method(question, top_k=top_k, llm_options=query_options, include_bm25=include_bm25)
     else:
-        result = query_method(question, top_k=top_k)
+        result = query_method(question, top_k=top_k, include_bm25=include_bm25)
     latency_ms = round((time.perf_counter() - started_at) * 1000, 2)
+
+    # Build sources from cosine retrieval (unchanged)
     sources = []
     for chunk in result.get("retrieved_chunks", []):
         metadata = chunk.get("metadata", {})
@@ -232,6 +239,16 @@ async def query_document(payload: dict[str, Any]) -> dict[str, Any]:
         sources.append(
             f"{metadata.get('filename', 'unknown')} | pages {', '.join(str(page) for page in page_ids)}"
         )
+
+    # Build sources from BM25 retrieval (if requested)
+    sources_bm25 = []
+    if include_bm25:
+        for chunk in result.get("retrieved_chunks_bm25", []):
+            metadata = chunk.get("metadata", {})
+            page_ids = metadata.get("page_ids") or [metadata.get("page_number", "?")]
+            sources_bm25.append(
+                f"{metadata.get('filename', 'unknown')} | pages {', '.join(str(page) for page in page_ids)}"
+            )
 
     usage = result.get("llm", {}).get("usage")
     telemetry = {
@@ -243,7 +260,7 @@ async def query_document(payload: dict[str, Any]) -> dict[str, Any]:
         "estimated_cost": None,
     }
 
-    return {
+    response = {
         "question": result["question"],
         "answer": result["answer"],
         "top_k": result["top_k"],
@@ -271,3 +288,12 @@ async def query_document(payload: dict[str, Any]) -> dict[str, Any]:
         },
         "telemetry": telemetry,
     }
+
+    # Include BM25 results if requested
+    if include_bm25:
+        response["sources_bm25"] = sources_bm25
+        response["retrieved_chunks_bm25"] = [
+            _public_chunk(chunk) for chunk in result.get("retrieved_chunks_bm25", [])
+        ]
+
+    return response

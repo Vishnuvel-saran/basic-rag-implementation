@@ -17,7 +17,7 @@ def test_query_endpoint_returns_answer_for_indexed_document():
         "DummyPipeline",
         (),
         {
-            "query": lambda self, question, top_k=5: {
+            "query": lambda self, question, top_k=5, include_bm25=False, **kwargs: {
                 "answer": "This is a grounded answer from the supplied context.",
                 "retrieved_chunks": [
                     {
