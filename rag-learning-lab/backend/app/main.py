@@ -50,10 +50,22 @@ def _public_chunk(chunk: dict[str, Any]) -> dict[str, Any]:
         "context": chunk.get("text", chunk.get("chunk_text", "")),
         "metadata": metadata,
     }
+    # Include all score-related fields
     if chunk.get("similarity_score") is not None:
         public_chunk["similarity_score"] = chunk["similarity_score"]
     if chunk.get("bm25_score") is not None:
         public_chunk["bm25_score"] = chunk["bm25_score"]
+    if chunk.get("retrieval_score") is not None:
+        public_chunk["retrieval_score"] = chunk["retrieval_score"]
+    if chunk.get("retrieval_method") is not None:
+        public_chunk["retrieval_method"] = chunk["retrieval_method"]
+    # Include RRF-specific fields for hybrid results
+    if chunk.get("rrf_score") is not None:
+        public_chunk["rrf_score"] = chunk["rrf_score"]
+    if chunk.get("bm25_rank") is not None:
+        public_chunk["bm25_rank"] = chunk["bm25_rank"]
+    if chunk.get("semantic_rank") is not None:
+        public_chunk["semantic_rank"] = chunk["semantic_rank"]
     return public_chunk
 
 

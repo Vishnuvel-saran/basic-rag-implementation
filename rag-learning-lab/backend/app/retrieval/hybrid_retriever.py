@@ -43,7 +43,7 @@ class HybridRetriever(RetrieverBase):
             top_k: Number of top results to return (after fusion)
 
         Returns:
-            List of fused result dicts with RRF scores
+            List of fused result dicts with RRF scores and individual method ranks
         """
         # Retrieve candidate pool from both methods
         # Use a larger pool to allow cross-method improvements
