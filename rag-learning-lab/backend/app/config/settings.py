@@ -40,6 +40,8 @@ class Settings:
     chunking_strategy: str = os.getenv("CHUNKING_STRATEGY", "fixed")
     semantic_threshold: float = _get_float("SEMANTIC_THRESHOLD", 0.75)
     top_k: int = _get_int("TOP_K", 5)
+    retrieval_method: str = os.getenv("RETRIEVAL_METHOD", "semantic")
+    rrf_k_constant: int = _get_int("RRF_K_CONSTANT", 60)
     llm_provider: str = os.getenv("LLM_PROVIDER", "openrouter")
     llm_model: str = os.getenv("LLM_MODEL", "openai/gpt-4o-mini")
     llm_temperature: float = _get_float("LLM_TEMPERATURE", 0.0)

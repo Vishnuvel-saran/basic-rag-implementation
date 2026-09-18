@@ -190,6 +190,7 @@ def delete_document(document_id: str) -> dict[str, Any]:
 async def query_document(payload: dict[str, Any]) -> dict[str, Any]:
     question = payload.get("question")
     top_k = payload.get("top_k", settings.top_k)
+    retrieval_method = payload.get("retrieval_method", settings.retrieval_method)
     include_bm25 = payload.get("include_bm25", False)
 
     if not isinstance(question, str) or not question.strip():
@@ -200,6 +201,11 @@ async def query_document(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(top_k, int) or top_k <= 0:
         raise HTTPException(
             status_code=400, detail="'top_k' must be a positive integer."
+        )
+
+    if not isinstance(retrieval_method, str) or not retrieval_method.strip():
+        raise HTTPException(
+            status_code=400, detail="'retrieval_method' must be a non-empty string."
         )
 
     temperature = payload.get("temperature", settings.llm_temperature)
@@ -225,13 +231,28 @@ async def query_document(payload: dict[str, Any]) -> dict[str, Any]:
         "model": model,
     }
     query_method = app.state.rag_pipeline.query
-    if "llm_options" in signature(query_method).parameters:
-        result = query_method(question, top_k=top_k, llm_options=query_options, include_bm25=include_bm25)
-    else:
-        result = query_method(question, top_k=top_k, include_bm25=include_bm25)
+    try:
+        if "llm_options" in signature(query_method).parameters:
+            result = query_method(
+                question,
+                top_k=top_k,
+                retrieval_method=retrieval_method,
+                llm_options=query_options,
+                include_bm25=include_bm25,
+            )
+        else:
+            result = query_method(
+                question,
+                top_k=top_k,
+                retrieval_method=retrieval_method,
+                include_bm25=include_bm25,
+            )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     latency_ms = round((time.perf_counter() - started_at) * 1000, 2)
 
-    # Build sources from cosine retrieval (unchanged)
+    # Build sources from primary retrieval method
     sources = []
     for chunk in result.get("retrieved_chunks", []):
         metadata = chunk.get("metadata", {})
@@ -240,9 +261,9 @@ async def query_document(payload: dict[str, Any]) -> dict[str, Any]:
             f"{metadata.get('filename', 'unknown')} | pages {', '.join(str(page) for page in page_ids)}"
         )
 
-    # Build sources from BM25 retrieval (if requested)
+    # Build sources from BM25 retrieval (if requested and not the primary method)
     sources_bm25 = []
-    if include_bm25:
+    if include_bm25 and retrieval_method != "bm25":
         for chunk in result.get("retrieved_chunks_bm25", []):
             metadata = chunk.get("metadata", {})
             page_ids = metadata.get("page_ids") or [metadata.get("page_number", "?")]
@@ -271,12 +292,13 @@ async def query_document(payload: dict[str, Any]) -> dict[str, Any]:
         "prompt": result["prompt"],
         "retrieval": {
             "top_k": result["top_k"],
-            "similarity_metric": "cosine",
+            "method": result.get("retrieval_method", "semantic"),
+            "similarity_metric": "cosine" if result.get("retrieval_method") == "semantic" else "bm25" if result.get("retrieval_method") == "bm25" else "rrf",
             "total_chunks_searched": len(app.state.vector_store._items),
             "embedding_model": settings.embedding_model,
             "embedding_dimension": (
                 len(result["retrieved_chunks"][0]["vector"])
-                if result["retrieved_chunks"]
+                if result["retrieved_chunks"] and "vector" in result["retrieved_chunks"][0]
                 else None
             ),
         },
@@ -289,8 +311,13 @@ async def query_document(payload: dict[str, Any]) -> dict[str, Any]:
         "telemetry": telemetry,
     }
 
-    # Include BM25 results if requested
-    if include_bm25:
+    # Include hybrid-specific metadata if applicable
+    if result.get("retrieval_method") == "hybrid":
+        response["retrieval"]["fusion_algorithm"] = "rrf"
+        response["retrieval"]["rrf_k_constant"] = settings.rrf_k_constant
+
+    # Include BM25 results if requested (backward compatibility)
+    if include_bm25 and result.get("retrieved_chunks_bm25"):
         response["sources_bm25"] = sources_bm25
         response["retrieved_chunks_bm25"] = [
             _public_chunk(chunk) for chunk in result.get("retrieved_chunks_bm25", [])
