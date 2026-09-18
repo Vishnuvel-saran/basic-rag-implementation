@@ -28,7 +28,7 @@ function App() {
   const [dragging, setDragging] = useState(false);
   const [stage, setStage] = useState("");
   const [error, setError] = useState("");
-  const [includeBM25, setIncludeBM25] = useState(false);
+  const [retrievalMethod, setRetrievalMethod] = useState("semantic");
   const fileInputRef = useRef(null);
   const atDocumentCap = documents.length >= documentCap;
   const pendingFiles = uploadQueue.filter((entry) => entry.status === "pending");
@@ -123,7 +123,7 @@ function App() {
       const response = await fetch(`${API_URL}/query`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: question.trim(), top_k: topK, temperature, max_output_tokens: maxOutputTokens, model, include_bm25: includeBM25 }),
+        body: JSON.stringify({ question: question.trim(), top_k: topK, temperature, max_output_tokens: maxOutputTokens, model, retrieval_method: retrievalMethod }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Question failed.");
@@ -184,11 +184,11 @@ function App() {
           <PanelLabel number="02" title="Ask the document" icon={<MessageSquare size={16} />} />
           <div className="ask-box">
             <textarea value={question} onChange={(event) => setQuestion(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") askQuestion(); }} placeholder="Ask a question about your document..." rows="3" />
-            <div className="ask-footer"><span className="hint">Ctrl / Cmd + Enter to ask</span><div className="ask-actions"><label>Top-K <input className="top-k-input" type="number" min="1" step="1" value={topK} onChange={(event) => setTopK(Math.max(1, Number(event.target.value) || 1))} /></label><button className="button accent" disabled={!question.trim() || busy} onClick={askQuestion}>{busy && stage !== "Embedding" ? <LoaderCircle className="spin" size={15} /> : <Send size={15} />} Ask</button></div></div>
+            <div className="ask-footer"><span className="hint">Ctrl / Cmd + Enter to ask</span><div className="ask-actions"><label>Retrieval <select value={retrievalMethod} onChange={(event) => setRetrievalMethod(event.target.value)}><option value="semantic">Semantic</option><option value="bm25">BM25</option><option value="hybrid">Hybrid</option></select></label><label>Top-K <input className="top-k-input" type="number" min="1" step="1" value={topK} onChange={(event) => setTopK(Math.max(1, Number(event.target.value) || 1))} /></label><button className="button accent" disabled={!question.trim() || busy} onClick={askQuestion}>{busy && stage !== "Embedding" ? <LoaderCircle className="spin" size={15} /> : <Send size={15} />} Ask</button></div></div>
           </div>
           {error && <div className="error-banner">{error}</div>}
           <Pipeline active={stage} />
-          <div className="llm-controls"><span>LLM experiment controls</span><label>Model<input value={model} onChange={(event) => setModel(event.target.value)} /></label><label>Temperature<input type="number" min="0" max="2" step="0.1" value={temperature} onChange={(event) => setTemperature(Number(event.target.value))} /></label><label>Max tokens<input type="number" min="1" value={maxOutputTokens} onChange={(event) => setMaxOutputTokens(Number(event.target.value))} /></label><label className="checkbox-label"><input type="checkbox" checked={includeBM25} onChange={(event) => setIncludeBM25(event.target.checked)} /><span>Compare with BM25 retrieval</span></label></div>
+          <div className="llm-controls"><span>LLM experiment controls</span><label>Model<input value={model} onChange={(event) => setModel(event.target.value)} /></label><label>Temperature<input type="number" min="0" max="2" step="0.1" value={temperature} onChange={(event) => setTemperature(Number(event.target.value))} /></label><label>Max tokens<input type="number" min="1" value={maxOutputTokens} onChange={(event) => setMaxOutputTokens(Number(event.target.value))} /></label></div>
           <ResultArea result={result} />
         </section>
       </section>
@@ -213,7 +213,146 @@ function NumberControl({ label, value, onChange, suffix, step = "1", min = "1", 
 function Pipeline({ active }) { return <div className="pipeline">{initialStages.map((item, index) => <div className={`pipeline-step ${active === item || (active === "Answer" && item === "Answer") ? "active" : ""}`} key={item}><span className="pipeline-node">{active === item ? <LoaderCircle className="spin" size={14} /> : active === "Answer" && item === "Answer" ? <Check size={14} /> : index + 1}</span><span>{item}</span>{index < initialStages.length - 1 && <i />}</div>)}</div>; }
 function ChunkCard({ chunk, index }) { const pages = chunk.metadata?.page_ids || [chunk.metadata?.page_number ?? "—"]; return <article className="chunk-card"><div className="chunk-card-top"><span className="chunk-id">{chunk.chunk_id || `chunk_${String(index + 1).padStart(3, "0")}`}</span><span>pages {pages.join(", ")}</span></div><p>{chunk.context}</p><div className="chunk-meta"><span>{chunk.context?.length || 0} chars</span><span>~{Math.ceil((chunk.context || "").split(/\s+/).filter(Boolean).length)} tokens</span></div></article>; }
 function EmptyChunks({ hasDocument }) { return <div className="empty-state"><FileText size={23} /><strong>{hasDocument ? "No chunks match your filter" : "Your chunks will appear here"}</strong><span>{hasDocument ? "Try a different search term." : "Upload and process a PDF to inspect the split."}</span></div>; }
-function ResultArea({ result }) { if (!result) return <div className="result-placeholder"><Gauge size={23} /><span>Your answer will appear first, followed by the evidence trail.</span></div>; return <div className="result-area"><div className="answer-card"><div className="answer-kicker"><span className="live-dot" /> FINAL ANSWER</div><p>{result.answer}</p><div className="sources">{result.sources?.map((source) => <span key={source}>{source}</span>)}</div></div><div className="retrieval-comparison">{result.retrieved_chunks && <Details title="Vector search (cosine similarity)" icon={<Search size={15} />} open><div className="retrieved-list">{result.retrieved_chunks?.map((chunk) => { const pages = chunk.metadata?.page_ids || [chunk.metadata?.page_number ?? "—"]; return <div className="retrieved-item" key={chunk.chunk_id}><div className="retrieved-top"><b>{chunk.chunk_id}</b><span className="score">{chunk.similarity_score != null ? chunk.similarity_score.toFixed(3) : "—"} similarity</span></div><small>pages {pages.join(", ")}</small><p>{chunk.context}</p></div>; })}</div></Details>}{result.retrieved_chunks_bm25 && <Details title="Keyword search (BM25)" icon={<Search size={15} />} open><div className="retrieved-list">{result.retrieved_chunks_bm25?.map((chunk) => { const pages = chunk.metadata?.page_ids || [chunk.metadata?.page_number ?? "—"]; return <div className="retrieved-item" key={chunk.chunk_id}><div className="retrieved-top"><b>{chunk.chunk_id}</b><span className="score">{chunk.bm25_score != null ? chunk.bm25_score.toFixed(1) : "—"} BM25</span></div><small>pages {pages.join(", ")}</small><p>{chunk.context}</p></div>; })}</div></Details>}</div><Details title="Prompt sent to LLM" icon={<MessageSquare size={15} />}><pre className="prompt-view">{result.prompt}</pre></Details><div className="detail-grid"><Details title="Retrieval details" icon={<Network size={15} />} open><MetricGrid items={[["Embedding model", result.retrieval?.embedding_model], ["Dimension", result.retrieval?.embedding_dimension || "—"], ["Metric", result.retrieval?.similarity_metric], ["Searched", result.retrieval?.total_chunks_searched], ["Top-K", result.retrieval?.top_k]]} /></Details><Details title="LLM configuration" icon={<Gauge size={15} />}><MetricGrid items={[["Model", result.llm?.model], ["Temperature", result.llm?.temperature], ["Max output", result.llm?.max_output_tokens]]} /></Details><Details title="Telemetry" icon={<Activity size={15} />}><MetricGrid items={[["Input tokens", result.telemetry?.input_tokens ?? "Not provided"], ["Output tokens", result.telemetry?.output_tokens ?? "Not provided"], ["Total tokens", result.telemetry?.total_tokens ?? "Not provided"], ["Latency", `${result.telemetry?.latency_ms ?? "—"} ms`], ["Cost", result.telemetry?.estimated_cost ?? "Not provided"]]} /><span className="telemetry-note">Token values are {result.telemetry?.token_source === "actual" ? "reported by the provider." : "not supplied by the provider."}</span></Details></div></div>; }
+function ResultArea({ result }) {
+  if (!result) return <div className="result-placeholder"><Gauge size={23} /><span>Your answer will appear first, followed by the evidence trail.</span></div>;
+
+  const retrievalMethod = result.retrieval?.method || "semantic";
+
+  return <div className="result-area">
+    <div className="answer-card">
+      <div className="answer-kicker"><span className="live-dot" /> FINAL ANSWER</div>
+      <p>{result.answer}</p>
+      <div className="sources">{result.sources?.map((source) => <span key={source}>{source}</span>)}</div>
+    </div>
+
+    <div className="retrieval-comparison">
+      {retrievalMethod === "semantic" && result.retrieved_chunks && (
+        <Details title="Vector Search (Semantic)" icon={<Search size={15} />} open>
+          <div className="retrieved-list">
+            {result.retrieved_chunks?.map((chunk) => {
+              const pages = chunk.metadata?.page_ids || [chunk.metadata?.page_number ?? "—"];
+              return <div className="retrieved-item" key={chunk.chunk_id}>
+                <div className="retrieved-top">
+                  <b>{chunk.chunk_id}</b>
+                  <span className="score">{chunk.similarity_score != null ? chunk.similarity_score.toFixed(3) : "—"} similarity</span>
+                </div>
+                <small>pages {pages.join(", ")}</small>
+                <p>{chunk.context}</p>
+              </div>;
+            })}
+          </div>
+        </Details>
+      )}
+
+      {retrievalMethod === "bm25" && result.retrieved_chunks && (
+        <Details title="Keyword Search (BM25)" icon={<Search size={15} />} open>
+          <div className="retrieved-list">
+            {result.retrieved_chunks?.map((chunk) => {
+              const pages = chunk.metadata?.page_ids || [chunk.metadata?.page_number ?? "—"];
+              return <div className="retrieved-item" key={chunk.chunk_id}>
+                <div className="retrieved-top">
+                  <b>{chunk.chunk_id}</b>
+                  <span className="score">{chunk.bm25_score != null ? chunk.bm25_score.toFixed(1) : "—"} BM25</span>
+                </div>
+                <small>pages {pages.join(", ")}</small>
+                <p>{chunk.context}</p>
+              </div>;
+            })}
+          </div>
+        </Details>
+      )}
+
+      {retrievalMethod === "hybrid" && (
+        <>
+          <Details title="Hybrid Results (RRF Fused)" icon={<Search size={15} />} open>
+            <div className="retrieved-list">
+              {result.retrieved_chunks?.map((chunk) => {
+                const pages = chunk.metadata?.page_ids || [chunk.metadata?.page_number ?? "—"];
+                return <div className="retrieved-item" key={chunk.chunk_id}>
+                  <div className="retrieved-top">
+                    <b>{chunk.chunk_id}</b>
+                    <span className="score">{chunk.rrf_score != null ? chunk.rrf_score.toFixed(4) : "—"} RRF</span>
+                  </div>
+                  <small>pages {pages.join(", ")} | BM25 rank: {chunk.bm25_rank ?? "—"} | Semantic rank: {chunk.semantic_rank ?? "—"}</small>
+                  <p>{chunk.context}</p>
+                </div>;
+              })}
+            </div>
+          </Details>
+
+          {result.retrieved_chunks && (
+            <>
+              <Details title="BM25 Individual Results" icon={<Search size={15} />}>
+                <div className="retrieved-list">
+                  {result.retrieved_chunks
+                    ?.filter(c => c.bm25_rank != null)
+                    ?.sort((a, b) => (a.bm25_rank || 999) - (b.bm25_rank || 999))
+                    ?.map((chunk) => {
+                      const pages = chunk.metadata?.page_ids || [chunk.metadata?.page_number ?? "—"];
+                      return <div className="retrieved-item" key={`bm25-${chunk.chunk_id}`}>
+                        <div className="retrieved-top">
+                          <b>{chunk.chunk_id}</b>
+                          <span className="score">Rank #{chunk.bm25_rank} | {chunk.bm25_score != null ? chunk.bm25_score.toFixed(1) : "—"} BM25</span>
+                        </div>
+                        <small>pages {pages.join(", ")}</small>
+                        <p>{chunk.context}</p>
+                      </div>;
+                    })}
+                </div>
+              </Details>
+
+              <Details title="Semantic Individual Results" icon={<Search size={15} />}>
+                <div className="retrieved-list">
+                  {result.retrieved_chunks
+                    ?.filter(c => c.semantic_rank != null)
+                    ?.sort((a, b) => (a.semantic_rank || 999) - (b.semantic_rank || 999))
+                    ?.map((chunk) => {
+                      const pages = chunk.metadata?.page_ids || [chunk.metadata?.page_number ?? "—"];
+                      return <div className="retrieved-item" key={`semantic-${chunk.chunk_id}`}>
+                        <div className="retrieved-top">
+                          <b>{chunk.chunk_id}</b>
+                          <span className="score">Rank #{chunk.semantic_rank} | {chunk.similarity_score != null ? chunk.similarity_score.toFixed(3) : "—"} similarity</span>
+                        </div>
+                        <small>pages {pages.join(", ")}</small>
+                        <p>{chunk.context}</p>
+                      </div>;
+                    })}
+                </div>
+              </Details>
+            </>
+          )}
+        </>
+      )}
+    </div>
+
+    <Details title="Prompt sent to LLM" icon={<MessageSquare size={15} />}>
+      <pre className="prompt-view">{result.prompt}</pre>
+    </Details>
+
+    <div className="detail-grid">
+      <Details title="Retrieval details" icon={<Network size={15} />} open>
+        <MetricGrid items={[
+          ["Method", result.retrieval?.method || "semantic"],
+          ["Metric", result.retrieval?.similarity_metric || "—"],
+          ...(result.retrieval?.method === "hybrid" ? [["Fusion Algorithm", "RRF"], ["RRF k constant", result.retrieval?.rrf_k_constant || 60]] : []),
+          ["Embedding model", result.retrieval?.embedding_model],
+          ["Dimension", result.retrieval?.embedding_dimension || "—"],
+          ["Searched", result.retrieval?.total_chunks_searched],
+          ["Top-K", result.retrieval?.top_k]
+        ]} />
+      </Details>
+
+      <Details title="LLM configuration" icon={<Gauge size={15} />}>
+        <MetricGrid items={[["Model", result.llm?.model], ["Temperature", result.llm?.temperature], ["Max output", result.llm?.max_output_tokens]]} />
+      </Details>
+
+      <Details title="Telemetry" icon={<Activity size={15} />}>
+        <MetricGrid items={[["Input tokens", result.telemetry?.input_tokens ?? "Not provided"], ["Output tokens", result.telemetry?.output_tokens ?? "Not provided"], ["Total tokens", result.telemetry?.total_tokens ?? "Not provided"], ["Latency", `${result.telemetry?.latency_ms ?? "—"} ms`], ["Cost", result.telemetry?.estimated_cost ?? "Not provided"]]} />
+        <span className="telemetry-note">Token values are {result.telemetry?.token_source === "actual" ? "reported by the provider." : "not supplied by the provider."}</span>
+      </Details>
+    </div>
+  </div>;
+}
 function Details({ title, icon, children, open = false }) { return <details open={open} className="details"><summary>{icon}<span>{title}</span><ChevronDown size={15} /></summary><div className="details-body">{children}</div></details>; }
 function MetricGrid({ items }) { return <div className="metric-grid">{items.map(([label, value]) => <div key={label}><span>{label}</span><b>{value ?? "—"}</b></div>)}</div>; }
 
